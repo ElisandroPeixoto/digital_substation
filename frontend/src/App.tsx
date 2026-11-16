@@ -6,6 +6,7 @@ import { DnpView } from './components/DnpView'
 import { EventsView } from './components/EventsView'
 import { InjectionWindow } from './components/InjectionWindow'
 import { PhaseEngineApp } from './phaseengine/PhaseEngineApp'
+import { SystemLabApp } from './systemlab/SystemLabApp'
 import { PrefsProvider } from './prefs'
 import { ConfigView } from './components/ConfigView'
 import { RelayFront } from './components/RelayFront'
@@ -179,12 +180,13 @@ export default function App() {
   const hash = useHash()
   const m = hash.match(/^#\/injecao\/([A-Za-z0-9]+)/)
   if (m) return <InjectionWindow sid={m[1]} />
-  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/about') ? 'about' : 'home'
+  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/systemlab') ? 'systemlab' : hash.startsWith('#/about') ? 'about' : 'home'
   return (
     <EclipseShell route={route}>
       {route === 'home' && <HomeView />}
       {route === 'about' && <AboutView />}
       {route === 'phaseengine' && <PhaseEngineApp />}
+      {route === 'systemlab' && <SystemLabApp />}
       {route === 'digitalrelay' && <PrefsProvider><DigitalRelayApp /></PrefsProvider>}
     </EclipseShell>
   )

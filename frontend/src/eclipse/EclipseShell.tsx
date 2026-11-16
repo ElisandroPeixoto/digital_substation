@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { APPS } from './apps'
 import { useTheme } from './theme'
 
-export type Route = 'home' | 'about' | 'digitalrelay' | 'phaseengine'
+export type Route = 'home' | 'about' | 'digitalrelay' | 'phaseengine' | 'systemlab'
 
 export function EclipseHeader({ route }: { route: Route }) {
   const [theme, toggle] = useTheme()

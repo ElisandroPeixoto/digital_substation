@@ -24,4 +24,11 @@ export const APPS: EclipseApp[] = [
     route: '#/phaseengine',
     glyph: '⚡',
   },
+  {
+    id: 'systemlab',
+    name: 'SystemLab',
+    description: 'Monte um diagrama unifilar e simule tensões, correntes e potências.',
+    route: '#/systemlab',
+    glyph: '⚡',
+  },
 ]

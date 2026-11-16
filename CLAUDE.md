@@ -6,10 +6,10 @@ UI, comentários, docs e mensagens de commit. Identificadores de código em ingl
 ## O sistema: Eclipse
 
 **Eclipse** é um software de simulação de sistemas elétricos de potência, uma plataforma com **vários aplicativos** que
-podem ou não interagir entre si. Hoje há dois: o **DigitalRelay** (simulador do relé SEL-751, descrito no restante deste
+podem ou não interagir entre si. Hoje há três: o **SystemLab** (`frontend/src/systemlab/`, só frontend: editor de diagrama unifilar com toolbox, arrastar/ligar terminais e solver nodal em pu — `model.ts` = elementos/terminais/parâmetros, `solver.ts` = regime permanente trifásico equilibrado com Sbase 100 MVA, `symbols.tsx` = símbolos SVG, `SystemLabApp.tsx` = editor e painéis; diagrama em `localStorage` `systemlab.diagram`), o **DigitalRelay** (simulador do relé SEL-751, descrito no restante deste
 arquivo) e o **PhaseEngine** (`frontend/src/phaseengine/`, só frontend: entrada de V/I, diagrama fasorial com fasor de referência, potências P/Q/S e FP por fase e total, componentes de sequência em I2/I0 ou 3I2/3I0; usa `phasor.ts` e `PhasorDiagram`; cálculos em `calc.ts`; estado em `localStorage` `phaseengine.state`; ícone provisório igual ao do DigitalRelay). Estrutura do shell:
 
-- Roteamento **por hash** em `frontend/src/App.tsx`: `#/` Home, `#/about`, `#/digitalrelay`, `#/phaseengine`, `#/injecao/<sid>` (pop-up de
+- Roteamento **por hash** em `frontend/src/App.tsx`: `#/` Home, `#/about`, `#/digitalrelay`, `#/phaseengine`, `#/systemlab`, `#/injecao/<sid>` (pop-up de
   injeção do DigitalRelay, sem o header do Eclipse).
 - `frontend/src/eclipse/EclipseShell.tsx`: header (logo `eclipse-logo.png`, botões Home/About), `HomeView` (ícone + "Eclipse" em
   Montserrat + ícones dos apps) e `AboutView`. `frontend/src/eclipse/apps.ts`: **registro dos apps** – para criar um novo app,
@@ -41,7 +41,7 @@ portas (`P1–P4`, `PF`), touchscreen (`SET_HMI.TXT`).
 backend/    Python 3.12 + FastAPI (+ olefile, pytest, httpx)
 frontend/   React 18 + TypeScript + Vite (sem biblioteca de UI; CSS puro em src/styles.css)
 assets/     identidade visual do Eclipse (eclipse-logo/icon/…) e relay-front-reference.png (referência do frontal)
-docs/       arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
+docs/       um .md por app (digitalrelay.md, phaseengine.md, systemlab.md) + arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
 Padrões SEL-751.rdb                 arquivo de exemplo (20 ajustes) – usado pelos testes
 Padrões SEL-751 (extraído)/         extração manual feita no início (dado de referência, não é usada pelo código)
 run.ps1                             instala, compila o frontend e sobe em http://127.0.0.1:8000

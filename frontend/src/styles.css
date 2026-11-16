@@ -371,3 +371,30 @@ td.files { background: var(--soft); }
 .pe .meas td.num, .pe .meas th { text-align: right; }
 .pe .meas td:first-child, .pe .meas th:first-child { text-align: left; }
 @media (max-width: 900px) { .pe-grid, .pe-seqs, .pe-diagrams { grid-template-columns: 1fr; } }
+
+/* ----------------------------------------------------------------- SystemLab */
+.sl { display: grid; grid-template-columns: 180px minmax(0, 1fr) 330px; height: calc(100vh - 52px); min-height: 480px; }
+.sl-tools, .sl-side { background: var(--panel); padding: 12px; overflow-y: auto; }
+.sl-tools { border-right: 1px solid var(--line); }
+.sl-side { border-left: 1px solid var(--line); }
+.sl-tools h3, .sl-side h3 { margin: 0 0 10px; font-size: 14px; }
+.sl-tool { display: flex; align-items: center; gap: 8px; padding: 4px 8px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: grab; user-select: none; }
+.sl-tool:hover { border-color: var(--accent); }
+.sl-tool span { font-size: 13px; }
+.sl-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.sl-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.sl-svg { flex: 1; width: 100%; min-height: 0; background: var(--bg); touch-action: none; user-select: none; }
+.sl-svg.wiring { cursor: crosshair; }
+.sl-name { font-size: 12px; font-weight: 700; }
+.sl-val { font-size: 10.5px; font-family: var(--mono); }
+.sl-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--muted); pointer-events: none; }
+.sl-field { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+.sl-field span { color: var(--muted); }
+.sl-field .numinput { width: 110px; }
+.sl-results { margin-top: 14px; }
+.sl-results .tbl th, .sl-results .tbl td { padding: 4px 5px; font-size: 11.5px; }
+.sl .meas td.num, .sl .meas th { text-align: right; }
+.sl .meas td:first-child, .sl .meas th:first-child { text-align: left; }
+.sl-link { cursor: pointer; }
+.sl-link:hover td { background: var(--surface-2); }
+@media (max-width: 1000px) { .sl { grid-template-columns: 150px minmax(0, 1fr); } .sl-side { display: none; } }

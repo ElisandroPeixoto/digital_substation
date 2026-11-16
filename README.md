@@ -1,4 +1,4 @@
-# Eclipse
+﻿# Eclipse
 
 **Eclipse** é um software web de **simulação de sistemas elétricos de potência**. Ele funciona como uma plataforma
 que abriga vários aplicativos, que podem ou não interagir entre si. A tela inicial (Home) mostra o ícone/nome
@@ -8,6 +8,7 @@ que abriga vários aplicativos, que podem ou não interagir entre si. A tela ini
 |---|---|---|
 | **DigitalRelay** | Simulador de relés SEL-751 (descrito abaixo) | `#/digitalrelay` |
 | **PhaseEngine** | Diagrama fasorial de tensões/correntes, potências e componentes de sequência (ver seção abaixo) | `#/phaseengine` |
+| **SystemLab** | Editor de diagrama unifilar com simulação de tensão, corrente e potência (ver seção abaixo) | `#/systemlab` |
 
 Para acrescentar um novo aplicativo: registre-o em `frontend/src/eclipse/apps.ts` e crie a rota em `App.tsx`.
 
@@ -105,10 +106,35 @@ ignorados.
 
 ## Documentação
 
+Um arquivo por aplicativo, com todos os detalhes de funcionamento:
+
+- [docs/digitalrelay.md](docs/digitalrelay.md) – DigitalRelay (simulador do relé SEL-751)
+- [docs/phaseengine.md](docs/phaseengine.md) – PhaseEngine (fasores, potências e componentes de sequência)
+- [docs/systemlab.md](docs/systemlab.md) – SystemLab (diagrama unifilar e simulação)
+
+Documentos gerais e do DigitalRelay:
+
 - [docs/arquitetura.md](docs/arquitetura.md) – módulos e ciclo de varredura
 - [docs/logica-simulada.md](docs/logica-simulada.md) – **o que é simulado, premissas e limitações**
 - [docs/api.md](docs/api.md) – endpoints REST
 - [docs/roadmap-sel751-alimentador-v1.24.md](docs/roadmap-sel751-alimentador-v1.24.md) – descrição da lógica do ajuste usado nos testes
+
+## SystemLab
+
+Aplicativo 100% frontend (`frontend/src/systemlab/`). O usuário monta um **diagrama unifilar**: na barra lateral esquerda
+(toolbox) estão **Fonte, Barramento, Disjuntor, Chave seccionadora, Transformador, Carga, TP e TC**; arraste para a área
+central, mova/gire (tecla **R**) e **ligue os terminais** (clique em um terminal e depois em outro, ou arraste de um até o
+outro). **Soltar um TC sobre uma ligação** o insere em série (a ligação é dividida em duas). Duplo clique em disjuntor/chave abre ou fecha. **Delete** remove; roda do mouse = zoom; arrastar o fundo = mover a vista.
+Os parâmetros do elemento selecionado (ex.: tensão e potência de curto da fonte, MVA/kV/Z% do trafo, MW/FP da carga, relações
+do TP/TC, estado do disjuntor) ficam no painel à direita, junto com os resultados; sem seleção o painel mostra o resumo do
+sistema. O botão "Carregar exemplo" cria um sistema pronto. O diagrama é salvo no navegador (`systemlab.diagram`).
+
+Cálculo (`solver.ts`): regime permanente trifásico equilibrado, em por unidade (Sbase = 100 MVA), análise nodal.
+Fonte = tensão atrás da impedância de curto-circuito (Scc, X/R); transformador = impedância série (z%, X/R; a base de tensão
+muda pela relação nominal, sem derivação); carga = impedância constante calculada na tensão nominal da zona (P, FP);
+disjuntor/chave/TC fechados = impedância desprezível; TP = só medição. Trechos sem caminho fechado até uma fonte ficam
+desenergizados. Resultados: tensão (kV ∠°), corrente (A ∠°), P/Q por terminal, secundário de TP/TC, carregamento e perdas
+do trafo. Limitações: sem faltas, sem desequilíbrio e sem cargas de potência constante (por enquanto).
 
 ## Identidade visual
 
