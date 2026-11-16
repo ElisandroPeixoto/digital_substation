@@ -1,5 +1,16 @@
 # Arquitetura
 
+## Visão geral do Eclipse
+
+O **Eclipse** é a plataforma (shell) que hospeda os aplicativos de simulação. O frontend é uma única SPA com
+roteamento por hash: `#/` (Home), `#/about`, `#/digitalrelay` (app), `#/phaseengine` (app) e `#/injecao/<sessão>` (pop-up do DigitalRelay).
+O shell (`frontend/src/eclipse/EclipseShell.tsx`) desenha o header (logo, Home, About) e a Home com os ícones dos apps;
+os apps ficam registrados em `frontend/src/eclipse/apps.ts`. Hoje existem o **PhaseEngine** (somente frontend: fasores, potências e componentes de sequência em `frontend/src/phaseengine/`, reaproveitando `phasor.ts` e `PhasorDiagram`) e o **DigitalRelay**
+(tudo abaixo). O backend FastAPI serve a SPA e a API `/api` (hoje só do DigitalRelay); novos apps podem ganhar o seu
+prefixo de rotas e compartilhar dados entre si pelo backend.
+
+## DigitalRelay
+
 ```mermaid
 flowchart LR
     RDB[(arquivo .rdb)] -->|upload| API
@@ -34,7 +45,7 @@ flowchart LR
 | `panel.py` | LEDs de alvo (com retenção), LEDs dos botões, pontos de display (DP). |
 | `dnp.py` | Mapa DNP3: BO/BI/AI, banda morta, eventos, comandos Select/Operate/Direct. |
 | `describe.py` | Rótulos legíveis (comentários, ALIAS do SER, textos de display). |
-| `sessions.py` | Sessões e o laço de tempo real (varredura a cada 10 ms; velocidade 0,5×–10×). |
+| `sessions.py` | Sessões e o laço de tempo real (varredura a cada 4 ms; velocidade 0,5×–10×). |
 | `main.py` | API REST e entrega do frontend compilado. |
 
 ### Ciclo de varredura (`RelayEngine.step(dt)`)
@@ -54,7 +65,8 @@ Cada equação é avaliada exatamente uma vez por ciclo (sem curto-circuito), pa
 
 | Arquivo | Conteúdo |
 |---|---|
-| `App.tsx` | Fluxo: upload → seleção do ajuste → simulador; restaura a sessão ao recarregar (localStorage). |
+| `App.tsx` | Roteador por hash do Eclipse; contém o `DigitalRelayApp` (fluxo: upload → seleção do ajuste → simulador; restaura a sessão ao recarregar (localStorage)). |
+| `eclipse/EclipseShell.tsx`, `eclipse/apps.ts` | Header (logo, Home/About), Home com ícones dos apps, About e registro de aplicativos. |
 | `components/RelayFront.tsx`, `Lcd.tsx` | Frontal do relé; lógica do display (rotação dos pontos, menu MEDIÇÃO/ALVOS/STATUS) e dos botões. |
 | `components/TestBench.tsx` | Tela inicial da simulação: disjuntor (campo), medição, entradas digitais (com IN101 auto/manual), saídas digitais, auxiliares. |
 | `components/MeasurementCard.tsx` | Medição: módulo/ângulo primário e secundário, frequência, P/Q/S/FP. |

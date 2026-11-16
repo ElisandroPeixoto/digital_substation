@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { fmt, usePoll } from '../hooks'
+import { usePoll } from '../hooks'
+import { useStamp } from '../prefs'
+import { ResizableTables } from './ResizableTables'
 import type { SerEvent } from '../types'
 import { Empty, Pill } from './ui'
 
@@ -8,6 +10,7 @@ export function EventsView({ sid }: { sid: string }) {
   const since = useRef(0)
   const [events, setEvents] = useState<SerEvent[]>([])
   const [q, setQ] = useState('')
+  const ts = useStamp()
 
   useEffect(() => {
     since.current = 0
@@ -28,7 +31,7 @@ export function EventsView({ sid }: { sid: string }) {
 
   const rows = [...events].reverse().filter((e) => !q || e.name.toLowerCase().includes(q.toLowerCase()) || e.text.toLowerCase().includes(q.toLowerCase()))
   return (
-    <div className="ser">
+    <ResizableTables id="ser" className="ser">
       <div className="toolbar">
         <input className="search" placeholder="Filtrar eventos…" value={q} onChange={(e) => setQ(e.target.value)} />
         <button onClick={async () => { await api.clearSer(sid); setEvents([]) }}>Limpar</button>
@@ -38,12 +41,12 @@ export function EventsView({ sid }: { sid: string }) {
         <Empty>Sem eventos ainda. Pressione um botão, aplique uma falta ou altere uma entrada.</Empty>
       ) : (
         <table className="tbl">
-          <thead><tr><th>#</th><th>t (s)</th><th>Bit</th><th>Estado</th><th>Texto</th></tr></thead>
+          <thead><tr><th>#</th><th>{ts.header}</th><th>Bit</th><th>Estado</th><th>Texto</th></tr></thead>
           <tbody>
             {rows.map((e) => (
               <tr key={e.seq}>
                 <td className="mono">{e.seq}</td>
-                <td className="mono">{fmt(e.t, 3)}</td>
+                <td className="mono">{ts.stamp(e.t, e.w, 3)}</td>
                 <td className="mono">{e.name}</td>
                 <td><Pill on={e.value} onLabel="Asserted" offLabel="Deasserted" /></td>
                 <td>{e.text}</td>
@@ -52,6 +55,6 @@ export function EventsView({ sid }: { sid: string }) {
           </tbody>
         </table>
       )}
-    </div>
+    </ResizableTables>
   )
 }

@@ -26,6 +26,7 @@ def feeder(archive):
     from app.sessions import create_engine
     relay = next(r for r in archive.relays.values() if r.name == FEEDER_NAME)
     eng = create_engine(relay)
+    eng.set_sim({"analog_on": True})   # a injeção analógica inicia desligada; os cenários precisam dela
     return eng
 
 

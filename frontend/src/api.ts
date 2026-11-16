@@ -80,6 +80,7 @@ export const api = {
   dnp: (sid: string, since: number) => req<DnpData>('GET', `/sessions/${sid}/dnp?since=${since}`),
   dnpCommand: (sid: string, index: number, code: string, mode: string) =>
     req<DnpResult>('POST', `/sessions/${sid}/dnp/command`, { index, code, mode }),
+  clearDnpEvents: (sid: string) => req<unknown>('DELETE', `/sessions/${sid}/dnp/events`),
   dnpMap: (sid: string, map: number) => req<unknown>('POST', `/sessions/${sid}/dnp/map`, { map }),
 
   settings: (sid: string, cls: string) => req<SettingsData>('GET', `/sessions/${sid}/settings/${cls}`),

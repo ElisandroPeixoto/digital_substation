@@ -5,10 +5,14 @@ import type { RelaySummary, SessionInfo, UploadSummary } from './types'
 import { DnpView } from './components/DnpView'
 import { EventsView } from './components/EventsView'
 import { InjectionWindow } from './components/InjectionWindow'
+import { PhaseEngineApp } from './phaseengine/PhaseEngineApp'
+import { PrefsProvider } from './prefs'
+import { ConfigView } from './components/ConfigView'
 import { RelayFront } from './components/RelayFront'
 import { SettingsView } from './components/SettingsView'
 import { TestBench } from './components/TestBench'
 import { TopBar } from './components/TopBar'
+import { AboutView, EclipseShell, HomeView, type Route } from './eclipse/EclipseShell'
 import { UploadScreen } from './components/UploadScreen'
 import { VariablesView } from './components/VariablesView'
 
@@ -37,12 +41,13 @@ function save(v: { sid?: string; uid?: string }) {
   }
 }
 
-function MainApp() {
+function DigitalRelayApp() {
   const [upload, setUpload] = useState<UploadSummary | null>(null)
   const [info, setInfo] = useState<SessionInfo | null>(null)
   const [view, setView] = useState<'select' | 'sim'>('select')
   const [tab, setTab] = useState<Tab>('panel')
   const [busy, setBusy] = useState(false)
+  const [config, setConfig] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Restaura a sessão anterior (o backend mantém a sessão em memória).
@@ -120,9 +125,13 @@ function MainApp() {
         onPlayPause={() => info && api.control(info.id, { running: !(panel?.running ?? true) })}
         onSpeed={(s) => info && api.control(info.id, { speed: s })}
         onRestart={() => info && api.restart(info.id)}
-        onChange={() => setView('select')}
+        onChange={() => { setConfig(false); setView('select') }}
+        onConfig={() => setConfig((c) => !c)}
+        configOpen={config}
       />
-      {view === 'select' || !info ? (
+      {config ? (
+        <ConfigView onClose={() => setConfig(false)} />
+      ) : view === 'select' || !info ? (
         <UploadScreen
           upload={upload}
           busy={busy}
@@ -155,8 +164,28 @@ function MainApp() {
   )
 }
 
-/** Rota mínima por hash: #/injecao/<sessão> abre a janela de injeção (pop-up). */
+function useHash(): string {
+  const [h, setH] = useState(window.location.hash)
+  useEffect(() => {
+    const on = () => setH(window.location.hash)
+    window.addEventListener('hashchange', on)
+    return () => window.removeEventListener('hashchange', on)
+  }, [])
+  return h
+}
+
+/** Roteamento por hash: #/ (Home), #/about, #/digitalrelay; #/injecao/<sessão> abre a janela de injeção (pop-up). */
 export default function App() {
-  const m = window.location.hash.match(/^#\/injecao\/([A-Za-z0-9]+)/)
-  return m ? <InjectionWindow sid={m[1]} /> : <MainApp />
+  const hash = useHash()
+  const m = hash.match(/^#\/injecao\/([A-Za-z0-9]+)/)
+  if (m) return <InjectionWindow sid={m[1]} />
+  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/about') ? 'about' : 'home'
+  return (
+    <EclipseShell route={route}>
+      {route === 'home' && <HomeView />}
+      {route === 'about' && <AboutView />}
+      {route === 'phaseengine' && <PhaseEngineApp />}
+      {route === 'digitalrelay' && <PrefsProvider><DigitalRelayApp /></PrefsProvider>}
+    </EclipseShell>
+  )
 }

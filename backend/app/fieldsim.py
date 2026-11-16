@@ -57,7 +57,9 @@ class SimConfig:
     fault_current: float = 2400.0
     fault_persistent: bool = True
     breaker_auto: bool = True          # 52A (IN101) acompanha o modelo do disjuntor
-    analog_on: bool = True             # injeção analógica ligada (desligada = tensões e correntes zero)
+    analog_on: bool = False            # injeção analógica (inicia DESLIGADA: desligada = tensões e correntes zero)
+    analog_off_on_output: bool = False  # desliga a injeção analógica quando uma saída digital (OUTxxx) atua
+    analog_off_outputs: list = field(default_factory=list)  # saídas que disparam o desligamento (vazio = qualquer)
     halarm: bool = False
     linka: bool = True
     linkb: bool = True

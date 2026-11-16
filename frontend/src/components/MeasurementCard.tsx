@@ -1,6 +1,7 @@
 import { api } from '../api'
 import { fmt } from '../hooks'
 import type { PanelData, SessionInfo } from '../types'
+import { Toggle } from './ui'
 
 function Row({ name, prim, sec, ang, unitP, unitS }: { name: string; prim: number; sec?: number; ang?: number; unitP: string; unitS?: string }) {
   return (
@@ -33,6 +34,33 @@ export function MeasurementCard({ sid, data, info, onOpenInjection }: { sid: str
         </button>
         <button className="primary" onClick={onOpenInjection}>Abrir janela de injeção ↗</button>
       </div>
+      <div className="row wrap">
+        <Toggle
+          checked={data.sim.analog_off_on_output}
+          onChange={(v) => api.sim(sid, { analog_off_on_output: v })}
+          label="Desligar a injeção analógica quando uma saída digital atuar"
+          hint="Quando uma das saídas escolhidas passar de desligada para ligada, a injeção é desligada. Religue-a pela chave acima."
+        />
+      </div>
+      {data.sim.analog_off_on_output && (
+        <div className="row wrap off-outputs">
+          <span className="muted">Saídas que desligam a injeção{data.sim.analog_off_outputs.length === 0 ? ' (nenhuma marcada = qualquer saída)' : ''}:</span>
+          {data.outputs.map((o) => {
+            const sel = data.sim.analog_off_outputs.includes(o.name)
+            return (
+              <label key={o.name} className="chk" title={o.label}>
+                <input
+                  type="checkbox"
+                  checked={sel}
+                  onChange={() => api.sim(sid, {
+                    analog_off_outputs: sel ? data.sim.analog_off_outputs.filter((n) => n !== o.name) : [...data.sim.analog_off_outputs, o.name],
+                  })}
+                /> {o.name}
+              </label>
+            )
+          })}
+        </div>
+      )}
       {!data.sim.analog_on && <p className="hint warn">Injeção desligada: o relé enxerga corrente, tensão e potência zero.</p>}
       {fault && <p className="hint warn">Falta ativa ({fault}): as correntes mostradas já incluem a falta.</p>}
       <table className="tbl meas">

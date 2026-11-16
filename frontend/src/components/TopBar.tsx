@@ -1,4 +1,5 @@
 import type { PanelData, SessionInfo } from '../types'
+import { simTime, usePrefs } from '../prefs'
 
 const SPEEDS = [0.5, 1, 2, 5, 10]
 
@@ -9,21 +10,18 @@ interface Props {
   onSpeed: (s: number) => void
   onRestart: () => void
   onChange: () => void
+  onConfig: () => void
+  configOpen: boolean
 }
 
-function clock(t: number) {
-  const m = Math.floor(t / 60)
-  const s = t - m * 60
-  return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`
-}
-
-export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange }: Props) {
+export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, onConfig, configOpen }: Props) {
+  const { prefs } = usePrefs()
   return (
     <header className="topbar">
       <div className="brand">
         <span className="brand-mark">⚡</span>
         <div>
-          <b>Simulador SEL-751</b>
+          <b>DigitalRelay</b>
           <small>{info ? `${info.device} · ${info.filename}` : 'Carregue um arquivo .rdb'}</small>
         </div>
       </div>
@@ -37,7 +35,7 @@ export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange }
               {data.status.trip === 1 && <span className="chip-state trip">TRIP</span>}
             </>
           )}
-          <span className="clock" title="Tempo simulado">{data ? clock(data.time) : '--:--'}</span>
+          <span className="clock" title="Tempo simulado">{data ? simTime(prefs, data.time) : '--'}</span>
           <button onClick={onPlayPause} title="Pausar/continuar a simulação">{data?.running === false ? '▶ Continuar' : '⏸ Pausar'}</button>
           <label className="speed">
             Velocidade
@@ -49,6 +47,7 @@ export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange }
           <button onClick={onChange}>Trocar ajuste</button>
         </div>
       )}
+      <button className={`gear ${configOpen ? 'active' : ''}`} onClick={onConfig} title="Configurações" aria-label="Configurações">⚙</button>
     </header>
   )
 }

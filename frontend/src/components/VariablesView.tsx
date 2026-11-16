@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api'
 import { fmt, usePoll } from '../hooks'
 import type { StateData } from '../types'
+import { useStamp } from '../prefs'
 import { Bar, Empty, Pill, Section } from './ui'
 
 const REC_LABEL: Record<string, string> = { RS: 'Repouso (79RS)', CY: 'Em ciclo (79CY)', LO: 'Bloqueio (79LO)' }
@@ -9,6 +10,7 @@ const REC_LABEL: Record<string, string> = { RS: 'Repouso (79RS)', CY: 'Em ciclo 
 export function VariablesView({ sid }: { sid: string }) {
   const { data, error } = usePoll(() => api.state(sid), 400, true, sid)
   const [q, setQ] = useState('')
+  const ts = useStamp()
   const [onlyActive, setOnlyActive] = useState(false)
   if (!data) return <Empty>{error ?? 'Carregando estado interno…'}</Empty>
   const s: StateData = data
@@ -29,7 +31,7 @@ export function VariablesView({ sid }: { sid: string }) {
       <div className="toolbar">
         <input className="search" placeholder="Filtrar por nome, comentário ou equação…" value={q} onChange={(e) => setQ(e.target.value)} />
         <label className="check"><input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} /> Só ativos (=1)</label>
-        <span className="muted">Tempo simulado: {fmt(s.time, 2)} s</span>
+        <span className="muted">Tempo simulado: {ts.simTime(s.time)}</span>
       </div>
 
       {s.unresolved.length > 0 && (
@@ -66,7 +68,7 @@ export function VariablesView({ sid }: { sid: string }) {
         ) : (
           <table className="tbl">
             <thead>
-              <tr><th>Elemento</th><th>Função</th><th>Ajuste</th><th>Medido</th><th>Controle de torque</th><th>Partida</th><th>Atuação</th><th>Avanço</th></tr>
+              <tr><th>Elemento</th><th>Função</th><th>Ajuste</th><th>Medido</th><th>× pickup</th><th>Tempo previsto</th><th>Controle de torque</th><th>Partida</th><th>Atuação</th><th>Reset</th><th>Avanço</th></tr>
             </thead>
             <tbody>
               {s.protection.elements
@@ -77,9 +79,12 @@ export function VariablesView({ sid }: { sid: string }) {
                     <td>{e.kind}</td>
                     <td className="mono">{e.setting}</td>
                     <td className="mono">{fmt(e.measured, 2)}</td>
+                    <td className="mono">{e.measured && e.pickup ? fmt(e.measured / e.pickup, 2) : '–'}</td>
+                    <td className="mono">{e.t_op != null ? `${fmt(e.t_op, 2)} s` : '–'}</td>
                     <td className="mono">{e.tc || '1'}</td>
                     <td><Pill on={e.pk} title={e.pickup_bit} /></td>
                     <td><Pill on={e.timed} title={e.timed_bit} /></td>
+                    <td>{e.reset_bit ? <Pill on={!!e.reset} title={e.reset_bit} /> : '–'}</td>
                     <td><Bar pct={e.progress} tone={e.timed ? 'red' : 'blue'} /></td>
                   </tr>
                 ))}

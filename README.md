@@ -1,4 +1,19 @@
-# Simulador SEL-751 (MVP)
+# Eclipse
+
+**Eclipse** é um software web de **simulação de sistemas elétricos de potência**. Ele funciona como uma plataforma
+que abriga vários aplicativos, que podem ou não interagir entre si. A tela inicial (Home) mostra o ícone/nome
+*Eclipse* e, abaixo, os ícones de acesso aos aplicativos; o header traz o logo e os botões **Home** e **About**.
+
+| Aplicativo | Descrição | Rota |
+|---|---|---|
+| **DigitalRelay** | Simulador de relés SEL-751 (descrito abaixo) | `#/digitalrelay` |
+| **PhaseEngine** | Diagrama fasorial de tensões/correntes, potências e componentes de sequência (ver seção abaixo) | `#/phaseengine` |
+
+Para acrescentar um novo aplicativo: registre-o em `frontend/src/eclipse/apps.ts` e crie a rota em `App.tsx`.
+
+---
+
+# DigitalRelay – simulador SEL-751 (MVP)
 
 Ferramenta web que **abre um arquivo `.rdb` do AcSELerator QuickSet**, decompõe os arquivos de texto de ajuste
 que existem dentro dele e **simula o relé SEL-751** com o ajuste escolhido:
@@ -19,7 +34,7 @@ execução) e aba **Eventos (SER)**.
 ```
 frontend/   React + TypeScript (Vite)
 backend/    Python + FastAPI (motor de simulação, leitura do .rdb, API)
-assets/     imagem de referência do frontal do relé
+assets/     identidade visual do Eclipse (logo, ícone, mockup da Home) e imagem de referência do frontal do relé
 docs/       arquitetura, lógica simulada (premissas/limitações), API e o roadmap do ajuste "Alimentador v1.24"
 ```
 
@@ -54,6 +69,7 @@ em outro `cd frontend && npm run dev` e abra http://localhost:5173 (o Vite encam
 
 ## Como usar
 
+0. Abra http://127.0.0.1:8000, na Home clique no ícone **DigitalRelay**.
 1. Arraste o `.rdb` (ex.: `Padrões SEL-751.rdb`) para a tela inicial. Cada pasta `Relays/<nome>` do arquivo vira um
    **ajuste** na lista; é possível ver cada arquivo de texto e baixar um `.zip` com eles.
 2. Clique em **Carregar no simulador** no ajuste desejado. O backend lê `set_G`, `set_1…4`, `set_L1…L4`, `set_F`,
@@ -93,3 +109,36 @@ ignorados.
 - [docs/logica-simulada.md](docs/logica-simulada.md) – **o que é simulado, premissas e limitações**
 - [docs/api.md](docs/api.md) – endpoints REST
 - [docs/roadmap-sel751-alimentador-v1.24.md](docs/roadmap-sel751-alimentador-v1.24.md) – descrição da lógica do ajuste usado nos testes
+
+## Identidade visual
+
+Tema escuro (padrão) e **modo claro** (botão ☀/☾ no header, lembrado no navegador) para todo o Eclipse; a tabela abaixo é a paleta escura (variáveis CSS em `frontend/src/styles.css`):
+
+| Elemento | Hex | Uso |
+|---|---|---|
+| Fundo principal | `#1A202C` | base da interface |
+| Superfície | `#2D3748` | cards, menus, barras |
+| Primária | `#63B3ED` | botões principais, links ativos, destaques |
+| Secundária | `#4FD1C5` | sucesso, destaques secundários, badges |
+| Texto primário | `#E2E8F0` | títulos e corpo |
+| Texto secundário | `#A0AEC0` | legendas, ajuda |
+| Erro | `#FC8181` | erros, alertas, falhas |
+
+Imagens em `assets/` (servidas na raiz pelo Vite via `publicDir`): `eclipse-logo.png` (header), `eclipse-icon.png`
+(ícone da Home e favicon), `eclipse-logo-dark.jpg`, `eclipse-mockup-home.png` e os originais `*-original.png`.
+A fonte do título é a Montserrat (pacote `@fontsource/montserrat`, sem depender de CDN). O painel frontal do relé
+mantém as cores do hardware real.
+
+## PhaseEngine
+
+Aplicativo 100% frontend (`frontend/src/phaseengine/`). O usuário informa módulo e ângulo de Va, Vb, Vc (fase-neutro, V) e
+Ia, Ib, Ic (A); o app mostra:
+
+- **Diagramas fasoriais** de tensões e correntes, com **fasor de referência** selecionável (Nenhum, Va…Ic): o escolhido
+  vai a 0° e os demais ficam referenciados a ele (a coluna "Referenciado" mostra os ângulos resultantes);
+- **Potências** por fase e trifásica (P, Q, S) e **fator de potência** por fase e total (S = V·I*; total = soma complexa;
+  Q > 0 = indutivo; FP = |P|/S). Não dependem da referência;
+- **Componentes de sequência** (positiva, negativa e zero) de tensão e corrente, exibidas como **I2/I0** ou **3I2/3I0**
+  (e V2/V0 ou 3V2/3V0), conforme a escolha do usuário.
+
+Os valores e opções ficam salvos no navegador (`phaseengine.state`).

@@ -1,9 +1,27 @@
-# CLAUDE.md – Simulador SEL-751
+# CLAUDE.md – Eclipse (DigitalRelay)
 
 Contexto do projeto para quem (humano ou agente) for continuar o trabalho. Idioma do projeto: **português (pt-BR)** –
 UI, comentários, docs e mensagens de commit. Identificadores de código em inglês/siglas SEL.
 
-## Objetivo
+## O sistema: Eclipse
+
+**Eclipse** é um software de simulação de sistemas elétricos de potência, uma plataforma com **vários aplicativos** que
+podem ou não interagir entre si. Hoje há dois: o **DigitalRelay** (simulador do relé SEL-751, descrito no restante deste
+arquivo) e o **PhaseEngine** (`frontend/src/phaseengine/`, só frontend: entrada de V/I, diagrama fasorial com fasor de referência, potências P/Q/S e FP por fase e total, componentes de sequência em I2/I0 ou 3I2/3I0; usa `phasor.ts` e `PhasorDiagram`; cálculos em `calc.ts`; estado em `localStorage` `phaseengine.state`; ícone provisório igual ao do DigitalRelay). Estrutura do shell:
+
+- Roteamento **por hash** em `frontend/src/App.tsx`: `#/` Home, `#/about`, `#/digitalrelay`, `#/phaseengine`, `#/injecao/<sid>` (pop-up de
+  injeção do DigitalRelay, sem o header do Eclipse).
+- `frontend/src/eclipse/EclipseShell.tsx`: header (logo `eclipse-logo.png`, botões Home/About), `HomeView` (ícone + "Eclipse" em
+  Montserrat + ícones dos apps) e `AboutView`. `frontend/src/eclipse/apps.ts`: **registro dos apps** – para criar um novo app,
+  adicione a entrada lá e a rota em `App.tsx`.
+- Identidade visual: imagens em `assets/` (o Vite usa `publicDir: '../assets'`, servindo-as na raiz: `/eclipse-logo.png`,
+  `/eclipse-icon.png`). Fonte Montserrat via `@fontsource/montserrat` (offline).
+- **Tema escuro (padrão) e claro**: botão ☀/☾ no header do Eclipse (`eclipse/theme.ts`, `localStorage` chave `eclipse.theme`, atributo `data-theme` em `<html>`; a paleta clara está em `:root[data-theme='light']` no `styles.css`). Paleta escura (variáveis em `styles.css`): fundo `#1A202C`, superfície `#2D3748`, primária `#63B3ED`, secundária
+  `#4FD1C5`, texto `#E2E8F0`/`#A0AEC0`, erro `#FC8181`. Use sempre as variáveis (`--bg`, `--panel`, `--accent`, `--ok`,
+  `--err`, `--muted`, `--soft`…), nunca cores fixas, para funcionar nos dois temas. A Home mostra só ícone + nome de cada app. O frontal do relé (`.relay`, `.lcd`) mantém as cores do hardware.
+- O backend (`/api`) hoje serve apenas o DigitalRelay; a SPA é entregue em `/`.
+
+## Objetivo do DigitalRelay
 
 Ferramenta web que recebe um arquivo **`.rdb`** do AcSELerator QuickSet (biblioteca de ajustes de relés SEL-751),
 extrai os arquivos de texto de cada ajuste e **simula o relé** com o ajuste escolhido:
@@ -22,7 +40,7 @@ portas (`P1–P4`, `PF`), touchscreen (`SET_HMI.TXT`).
 ```
 backend/    Python 3.12 + FastAPI (+ olefile, pytest, httpx)
 frontend/   React 18 + TypeScript + Vite (sem biblioteca de UI; CSS puro em src/styles.css)
-assets/     relay-front-reference.png (imagem de referência do frontal)
+assets/     identidade visual do Eclipse (eclipse-logo/icon/…) e relay-front-reference.png (referência do frontal)
 docs/       arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
 Padrões SEL-751.rdb                 arquivo de exemplo (20 ajustes) – usado pelos testes
 Padrões SEL-751 (extraído)/         extração manual feita no início (dado de referência, não é usada pelo código)
@@ -36,19 +54,19 @@ run.ps1                             instala, compila o frontend e sobe em http:/
 | `rdb.py` | Abre o contêiner OLE (`Relays/<pasta>/set_*.txt`, `Misc/*.txt`); nome completo do relé vem de `Misc/Device.txt` (as pastas do .rdb são truncadas em 31 caracteres). Gera `.zip`. |
 | `settings.py` | Parser de `set_*.txt` (`[INFO]`, `[classe]`, `NOME,"valor"` com `""` escapado). `RelaySettings.sections[classe]`. |
 | `selogic.py` | Interpretador SELogic. **Sem curto-circuito** (as bordas `R_TRIG/F_TRIG` precisam ser avaliadas todo ciclo). Primeira avaliação nunca gera borda. |
-| `curves.py` | Curvas U1–U5 / C1–C5. |
-| `protection.py` | Elementos 50/51/27/59/81D criados do grupo ativo; pickup `OFF` = desabilitado (bits ainda registrados com 0). |
+| `curves.py` | Curvas U1–U5 / C1–C5 / E1–E3 (equações do manual, tabelas 4.20–4.22), reset eletromecânico, saturação `51SAT` (M ≤ 30). |
+| `protection.py` | Elementos 50/51/27/59/81D do grupo ativo; pickup `OFF` = desabilitado (bits registrados com 0). 50: bits `50xnP/T` (+ `50A/B/C1P`, `50A/B/C2P`), `50xnD = OFF` desabilita; 51: `51xP/T/R`, CT, MR, reset 1 ciclo ou EM; `ORED50T/ORED51T`. |
 | `fieldsim.py` | Fasores, tipos de falta (AG BG CG AB BC CA ABC), afundamento, modelo do disjuntor, presets. |
 | `engine.py` | `RelayEngine.step(dt)`: ciclo de varredura, TRIP, CLOSE, religamento 79, SV/SC/MV/LT/OUT, grupos, SER, snapshots. |
 | `panel.py` | LEDs de alvo (retenção, `RSTLED`), LEDs dos botões (`PBnA/B_LED`, cor `AO`=(ligado,desligado)), pontos de display `DPnn`. |
 | `dnp.py` | Mapa `D1–D3`, banda morta, eventos, comandos. |
 | `describe.py` | Rótulos (comentários `#`, ALIAS do SER, textos do display), `normal_state`, `standard_label`. |
-| `sessions.py` | `SessionManager` + laço de tempo real (varredura a cada 10 ms; `dt = 0,01 × velocidade`). |
+| `sessions.py` | `SessionManager` + laço de tempo real (varredura a cada 4 ms (`BASE_DT`); `dt = 0,004 × velocidade`). |
 | `main.py` | Rotas REST e entrega de `frontend/dist`. |
 
 ### Frontend (`frontend/src`)
 
-`App.tsx` (fluxo upload → seleção → simulador; sessão restaurada via `localStorage` chave `sel751.sim`),
+`eclipse/` (shell, Home, About, registro de apps), `prefs.tsx` (preferências de exibição: base das estampas sim/real e formato `segundos` ou `hh:mm:ss:mmm`; tela `ConfigView`, ícone ⚙ na `TopBar`), `App.tsx` (roteador do Eclipse e `DigitalRelayApp`: fluxo upload → seleção → simulador; sessão restaurada via `localStorage` chave `sel751.sim`),
 `api.ts` (cliente; **eventos de botão em fila ordenada**), `hooks.ts` (`usePoll`), `types.ts`,
 `components/`: `RelayFront`, `Lcd` (display + menu), `TestBench`, `MeasurementCard`, `InjectionWindow` (+ `PhasorDiagram`, `phasor.ts`), `VariablesView`, `DnpView`, `SettingsView`,
 `EventsView`, `UploadScreen`, `TopBar`, `ui.tsx`.
@@ -92,20 +110,20 @@ Decisões que afetam o comportamento (verificar contra relé real se possível):
   modo secundário. Falta ativa sobrepõe as correntes; disjuntor aberto = corrente zero. A janela de injeção é um pop-up da própria
   SPA (`window.open` em `#/injecao/<sid>`, roteado em `App.tsx`); o modo primário/secundário fica em `localStorage`
   (`sel751.inject.mode`).
-- `SimConfig.analog_on` (padrão ligado): chave "Injeção analógica" no cartão Medição da tela inicial; desligada = correntes e tensões
+- `SimConfig.analog_on` (padrão DESLIGADO: a simulação inicia sem corrente nem tensão): chave "Injeção analógica" no cartão Medição da tela inicial; desligada = correntes e tensões
   zero no relé (`fieldsim.phasors`). A **janela de injeção só edita valores**: a falta (`POST/DELETE /fault`, presets) segue na API e nos
   testes, mas **não tem controle na UI** (decisão do usuário).
 - `SimConfig.breaker_auto` (padrão ligado): a entrada do 52A segue o disjuntor; desligado, é livre (`engine.input_raw`).
   `POST /breaker` move o disjuntor físico em qualquer modo.
 - Textos centrais dos botões PB1–PB8 são só de UI (`localStorage`, chave `sel751.pbtitles.<relay_id>`); coluna esquerda = PB5–PB8,
   direita = PB1–PB4.
-- Medidas: `IN` e `IG` = soma fasorial das fases; pickups em A **secundários** (primário ÷ CTR); `VNOM`×`PTR` = tensão L-L primária.
+- Medidas: `IN` = soma fasorial ÷ `CTRN`, `IG` = soma fasorial ÷ `CTR`; pickups em A **secundários** (primário ÷ CTR); `VNOM`×`PTR` = tensão L-L primária.
 - DNP: `AI = round(valor × escala)` saturado em 16 bits (`OVER_RANGE`); evento quando |Δcontagem| > banda morta; `Latch Off` →
   `NOT_SUPPORTED`; `Select→Operate` vale 10 s simulados.
-- Resolução 10 ms a 1× (a 10×, 100 ms): os alarmes de tempo de abertura (100/120/140 ms) só são confiáveis em 1×.
+- Resolução 4 ms a 1× (múltiplos nas outras velocidades: 10× → 40 ms): os alarmes de tempo de abertura (100/120/140 ms) são mais confiáveis em 1×.
 
-Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: 67, 49, 46, HIF, 52ABF interno, 25, 78, 55,
-`E27I/E59I`, demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em rede, `MR` das curvas.
+Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: 67, 49, 46, 50INC, HIF, 52ABF interno, 25, 78, 55,
+`E27I/E59I`, demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em rede.
 
 ## Convenções e cuidados
 
@@ -125,7 +143,7 @@ Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: 67, 4
 
 `conftest.py` (fixtures `archive`, `feeder`; helpers `run`, `tap`), `test_selogic.py`, `test_rdb_settings.py`,
 `test_engine_feeder.py` (cenários do padrão Alimentador v1.24: falta/religamento/bloqueio, dois toques, local/remoto, DNP,
-grupos, alarmes de abertura, debounce, LEDs), `test_api.py` (TestClient com upload real).
+grupos, alarmes de abertura, debounce, LEDs), `test_api.py` (TestClient com upload real), `test_overcurrent.py` (50/51 com ajuste sintético, não depende do .rdb).
 Testes que dependem do `.rdb` são ignorados se o arquivo da raiz não existir. Ao mudar o motor, rode a suíte inteira.
 
 ## Verificação manual rápida

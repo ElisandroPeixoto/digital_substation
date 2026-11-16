@@ -7,6 +7,7 @@ os modos Select-Before-Operate e Direct Operate.
 from __future__ import annotations
 
 import re
+import time
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,7 @@ class DnpMap:
         self.co: dict[int, str] = {}
         self._bi_prev: dict[int, int] = {}
         self._bi_changed: dict[int, float] = {}
+        self._bi_changed_w: dict[int, float] = {}   # horário real (época, s) da última mudança
         self._ai_last_event: dict[int, int] = {}
         self.events: deque[dict] = deque(maxlen=1500)
         self.seq = 0
@@ -96,6 +98,7 @@ class DnpMap:
             self._bi_prev[idx] = cur
             if prev is not None and prev != cur:
                 self._bi_changed[idx] = t
+                self._bi_changed_w[idx] = time.time()
                 self._push({"t": t, "kind": "BI", "index": idx, "name": name, "value": cur, "raw": cur})
         for idx, (name, scale, db) in self.ai.items():
             if name == "NA":
@@ -112,6 +115,7 @@ class DnpMap:
     def _push(self, ev: dict) -> None:
         self.seq += 1
         ev["seq"] = self.seq
+        ev["w"] = time.time()
         self.events.append(ev)
 
     # --------------------------------------------------------------- comandos
@@ -143,7 +147,7 @@ class DnpMap:
                     self.selected = None
             else:  # direct
                 status, msg = self._execute(name, code)
-        result = {"t": round(t, 3), "index": index, "name": name or "?", "code": code, "mode": mode,
+        result = {"t": round(t, 3), "w": time.time(), "index": index, "name": name or "?", "code": code, "mode": mode,
                   "status": status, "message": msg}
         self.log.appendleft(result)
         return result
@@ -165,7 +169,7 @@ class DnpMap:
 
         bo = [{"index": i, "name": n, "desc": desc(n)} for i, n in sorted(self.bo.items())]
         bi = [{"index": i, "name": n, "desc": desc(n), "value": (1 if v.get(n, 0.0) else 0) if n != "NA" else None,
-               "changed": self._bi_changed.get(i)} for i, n in sorted(self.bi.items())]
+               "changed": self._bi_changed.get(i), "changed_w": self._bi_changed_w.get(i)} for i, n in sorted(self.bi.items())]
         ai = []
         for i, (n, scale, db) in sorted(self.ai.items()):
             if n == "NA":

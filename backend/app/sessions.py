@@ -10,8 +10,8 @@ from .engine import RelayEngine
 from .rdb import RdbRelay
 from .settings import RelaySettings
 
-BASE_DT = 0.01          # período de varredura (s de tempo real)
-MAX_SCANS_PER_WAKE = 10
+BASE_DT = 0.004         # período de varredura (s de tempo real): 4 ms a 1×
+MAX_SCANS_PER_WAKE = 25
 MAX_SESSIONS = 8
 SPEEDS = (0.5, 1.0, 2.0, 5.0, 10.0)
 

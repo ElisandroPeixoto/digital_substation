@@ -1,6 +1,6 @@
 # API REST
 
-Base: `/api`. Documentação interativa (Swagger): `/docs`. Erros: JSON `{"detail": "..."}`.
+Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclipse é servido na raiz `/`, com as imagens de `assets/` em `/eclipse-*.png`). Documentação interativa (Swagger): `/docs`. Erros: JSON `{"detail": "..."}`.
 
 ## Arquivo `.rdb`
 
@@ -39,6 +39,7 @@ Base: `/api`. Documentação interativa (Swagger): `/docs`. Erros: JSON `{"detai
 | GET | `/sessions/{sid}/state` | Entradas, saídas, latches, SV, contadores, MV, proteção, religamento, Relay Word, analógicos, bits desconhecidos. |
 | GET / DELETE | `/sessions/{sid}/ser?since=N` | Registro sequencial de eventos / limpa. |
 | GET | `/sessions/{sid}/dnp?since=N` | Pontos BO/BI/AI, eventos (após `N`), registro de comandos, seleção ativa. |
+| DELETE | `/sessions/{sid}/dnp/events` | Limpa os eventos DNP3 (a numeração continua). |
 | POST | `/sessions/{sid}/dnp/command` | `{index, code: PULSE_ON\|LATCH_ON\|LATCH_OFF, mode: select\|operate\|direct}`. Resultado: `SUCCESS`, `NO_SELECT`, `TIMEOUT`, `NOT_SUPPORTED`, `FORMAT_ERROR`. |
 | POST | `/sessions/{sid}/dnp/map` | `{map: 1..3}` – troca o mapa DNP (classes `D1…D3`). |
 
@@ -49,3 +50,7 @@ Base: `/api`. Documentação interativa (Swagger): `/docs`. Erros: JSON `{"detai
 | GET | `/sessions/{sid}/settings/{classe}` | Ajustes da classe (`G`, `1`, `L1`, `F`, `R`, `D1`…). |
 | GET | `/sessions/{sid}/settings/{classe}/raw` | Texto original do arquivo. |
 | PATCH | `/sessions/{sid}/settings` | `{cls, key, value}` – altera um ajuste e recompila a lógica (só na sessão). |
+
+## Estampas de tempo
+
+Eventos SER, eventos DNP3, registro de comandos e a "última mudança" dos BI trazem o tempo simulado (`t`, em s) e o **horário real** do computador no instante do evento (`w`, época Unix em s; `changed_w` nos BI). A interface escolhe qual mostrar (aba Configurações, `localStorage` `sel751.prefs`).

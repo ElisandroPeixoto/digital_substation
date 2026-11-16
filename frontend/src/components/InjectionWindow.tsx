@@ -10,7 +10,7 @@ import { NumField, NumInput } from './ui'
 type Mode = 'primary' | 'secondary'
 const MODE_KEY = 'sel751.inject.mode'
 const PH = ['A', 'B', 'C'] as const
-const COLORS: Record<string, string> = { A: '#d64545', B: '#1f9d55', C: '#2f6df6' }
+const COLORS: Record<string, string> = { A: '#FC8181', B: '#4FD1C5', C: '#63B3ED' }
 
 export function injectionUrl(sid: string): string {
   return `${window.location.origin}${window.location.pathname}#/injecao/${sid}`

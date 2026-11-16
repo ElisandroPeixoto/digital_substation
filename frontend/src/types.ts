@@ -83,6 +83,8 @@ export interface SimConfig {
   fault_current: number
   fault_persistent: boolean
   breaker_auto: boolean
+  analog_off_on_output: boolean
+  analog_off_outputs: string[]
   analog_on: boolean
   halarm: boolean
   linka: boolean
@@ -165,6 +167,10 @@ export interface StateElement {
   pk: boolean
   timed: boolean
   progress: number
+  multiple?: number          // I / pickup (50 e 51)
+  t_op?: number | null       // tempo total previsto da curva (51), em s
+  reset_bit?: string         // 51xR
+  reset?: boolean
 }
 export interface StateData {
   time: number
@@ -201,6 +207,7 @@ export interface StateData {
 export interface DnpEvent {
   seq: number
   t: number
+  w?: number
   kind: 'BI' | 'AI'
   index: number
   name: string
@@ -209,6 +216,7 @@ export interface DnpEvent {
 }
 export interface DnpResult {
   t: number
+  w?: number
   index: number
   name: string
   code: string
@@ -220,7 +228,7 @@ export interface DnpData {
   map: number
   maps: number[]
   bo: { index: number; name: string; desc: string }[]
-  bi: { index: number; name: string; desc: string; value: number | null; changed: number | null }[]
+  bi: { index: number; name: string; desc: string; value: number | null; changed: number | null; changed_w?: number | null }[]
   ai: {
     index: number
     name: string
@@ -242,6 +250,7 @@ export interface DnpData {
 export interface SerEvent {
   seq: number
   t: number
+  w?: number
   name: string
   value: number
   text: string

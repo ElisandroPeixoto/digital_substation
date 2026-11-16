@@ -17,6 +17,7 @@ from __future__ import annotations
 import cmath
 import math
 import re
+import time
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -24,7 +25,7 @@ from .describe import build_labels, normal_state
 from .dnp import DnpMap
 from .fieldsim import A_OP, A_OP2, FieldSim
 from .panel import Panel
-from .protection import build_elements
+from .protection import build_elements, update_ored
 from .selogic import Expr, split_comment
 from .settings import RelaySettings
 
@@ -139,6 +140,7 @@ class RelayEngine:
         self.trip_rose = False
         self.labels = build_labels(settings)
         self.trip_outs: list[str] = []
+        self._analog_off_pending = False   # desligar a injeção assim que o disjuntor abrir
         self.close_outs: list[str] = []
         self.bk_input = "IN101"
         self.panel = Panel(self)
@@ -333,6 +335,8 @@ class RelayEngine:
         for key, val in patch.items():
             if key in ("fault_type",):
                 cfg.fault_type = val or None
+            elif key == "analog_off_outputs":
+                cfg.analog_off_outputs = sorted({str(n).upper() for n in (val or []) if str(n).upper() in self.out_keys})
             elif hasattr(cfg, key):
                 cur = getattr(cfg, key)
                 setattr(cfg, key, bool(val) if isinstance(cur, bool) else float(val))
@@ -359,6 +363,7 @@ class RelayEngine:
         self._update_meas(dt)
         for el in self.elements:
             el.update(dt)
+        update_ored(self, self.elements)
         self._trip_stage(dt)
         self._recloser_stage(dt)
         self._close_stage(dt)
@@ -419,7 +424,8 @@ class RelayEngine:
         i2 = I["A"] + A_OP2 * I["B"] + A_OP * I["C"]
         m["IA"], m["IB"], m["IC"] = ia / self.ctr, ib / self.ctr, ic / self.ctr
         m["IMAX"] = max(m["IA"], m["IB"], m["IC"])
-        m["IN"] = m["IG"] = abs(resid) / self.ctrn
+        m["IN"] = abs(resid) / self.ctrn   # canal IN (TC de neutro/balanceado)
+        m["IG"] = abs(resid) / self.ctr    # residual calculado das correntes de fase
         m["I2"] = abs(i2) / self.ctr
         m["VA"], m["VB"], m["VC"] = (abs(V[p]) / self.ptr for p in "ABC")
         vab, vbc, vca = V["A"] - V["B"], V["B"] - V["C"], V["C"] - V["A"]
@@ -645,8 +651,23 @@ class RelayEngine:
                 v[lt.name] = 0.0
             elif s:
                 v[lt.name] = 1.0
+        rose = False
+        defer = False
+        watched = self.field.cfg.analog_off_outputs
         for key in self.out_keys:
-            v[key] = 1.0 if self.ev(lc, key) else 0.0
+            new = 1.0 if self.ev(lc, key) else 0.0
+            if new and not v.get(key, 0.0) and (not watched or key in watched):
+                rose = True
+                defer = defer or key in self.trip_outs
+            v[key] = new
+        # opção do usuário: a atuação de uma saída digital desliga a injeção analógica (efeito no próximo ciclo).
+        # Se for a bobina de abertura e o disjuntor ainda está fechado, a injeção só é cortada quando ele abrir:
+        # assim a corrente persiste durante o tempo de abertura (supervisão SV13..SV16/LT18..LT20).
+        if rose and self.field.cfg.analog_off_on_output:
+            if defer and self.field.breaker.closed:
+                self._analog_off_pending = True
+            else:
+                self.field.cfg.analog_on = False
 
     # -- 6: disjuntor
     def _breaker_stage(self, dt: float) -> None:
@@ -654,6 +675,10 @@ class RelayEngine:
         trip_coil = any(v.get(k, 0.0) for k in self.trip_outs)
         close_coil = any(v.get(k, 0.0) for k in self.close_outs)
         self.field.step_breaker(dt, bool(trip_coil), bool(close_coil))
+        if self._analog_off_pending and not self.field.breaker.closed:
+            self._analog_off_pending = False
+            if self.field.cfg.analog_off_on_output:
+                self.field.cfg.analog_on = False
 
     # -- 7: grupo de ajustes
     def _group_stage(self, dt: float) -> None:
@@ -687,7 +712,7 @@ class RelayEngine:
             self._ser_prev[name] = cur
             if prev is not None and prev != cur:
                 self.ser_seq += 1
-                self.ser_log.append({"seq": self.ser_seq, "t": round(self.t, 3), "name": name, "value": int(cur != 0),
+                self.ser_log.append({"seq": self.ser_seq, "t": round(self.t, 3), "w": time.time(), "name": name, "value": int(cur != 0),
                                      "text": self._alias_text(name, cur != 0)})
 
     def _alias_text(self, name: str, value: bool) -> str:

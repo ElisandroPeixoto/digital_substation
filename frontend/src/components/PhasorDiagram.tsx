@@ -52,7 +52,7 @@ export function PhasorDiagram({ id, title, unit, items }: { id: string; title: s
             </g>
           )
         })}
-        <circle cx={C} cy={C} r={2.5} fill="#44506b" />
+        <circle cx={C} cy={C} r={2.5} fill="#A0AEC0" />
       </svg>
     </figure>
   )

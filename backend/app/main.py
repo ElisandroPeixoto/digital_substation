@@ -323,6 +323,13 @@ async def get_dnp(sid: str, since: int = 0) -> dict:
     return _session(sid).engine.dnp.snapshot(since)
 
 
+@app.delete("/api/sessions/{sid}/dnp/events")
+async def clear_dnp_events(sid: str) -> dict:
+    """Limpa a fila de eventos DNP3 (a numeração continua, para não reenviar eventos antigos)."""
+    _session(sid).engine.dnp.events.clear()
+    return {"ok": True}
+
+
 @app.post("/api/sessions/{sid}/dnp/command")
 async def dnp_command(sid: str, body: DnpCommand) -> dict:
     if body.mode.lower() not in ("select", "operate", "direct"):

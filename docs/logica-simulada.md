@@ -1,6 +1,6 @@
 # Lógica simulada: premissas e limitações
 
-O simulador **não executa o firmware** do SEL-751. Ele reproduz o comportamento funcional descrito pelos arquivos de
+Este documento descreve o aplicativo **DigitalRelay** do Eclipse. O simulador **não executa o firmware** do SEL-751. Ele reproduz o comportamento funcional descrito pelos arquivos de
 ajuste, com modelos simplificados. Esta página lista o que é fiel, o que é aproximado e o que não existe.
 
 ## O que é lido dos ajustes
@@ -34,14 +34,37 @@ portas (`P1–P4`, `PF`) e tela touchscreen (`SET_HMI.TXT`).
 
 ## Proteção
 
-- Elementos habilitados somente com pickup diferente de `OFF`.
-- **50**: partida quando `|I| ≥ pickup` (rearme em 95 %), disparo após `D` segundos.
-- **51**: integração da curva (U1–U5 / C1–C5) com `M = I/pickup` limitado a 20, mais `CT`. Reset instantâneo (`RS = N`) ou
-  linear aproximado (`RS = Y`). *`MR` (resposta mínima) não é simulada.*
-- Grandezas: `IMAX` (fase), `IA/IB/IC`, `IN` e `IG` (ambas = soma fasorial das fases, TC de neutro em conexão residual),
-  `3I2`. Tensões: `VA…VC`, `VAB…VCA`, `3V0`, `3V2`, frequência.
-- **Não implementados**: elementos direcionais (67), 49 (térmico), 46 (desbalanço), HIF, partida a frio, falha de disjuntor
-  interna (`52ABF`), sincronismo (25), 78, 55, bloqueio por harmônicas, `E27I/E59I` (inversas de tensão), demanda.
+Base: manual do SEL-751, seção "Overcurrent Elements" / "Time-Overcurrent Elements" (figuras 4.2 a 4.12, tabelas 4.9 a 4.22).
+
+### Instantâneo / tempo definido (50)
+
+- Elementos `50P1–4` (corrente máxima de fase), `50N1–4` (`IN`), `50G1–4` (`IG`) e `50Q1–4` (`3I2`). Habilitados só com pickup diferente de `OFF`.
+- Bit de **partida** `50xnP`: sobe quando a grandeza ≥ pickup e o controle de torque `50xnTC` é verdadeiro; cai abaixo de 95 % do pickup.
+  Bit de **atuação** `50xnT`: `50xnP` mantido por `50xnD` segundos. **`50xnD = OFF` desabilita o elemento** (nenhum dos dois bits sobe).
+- `50P1` e `50P2` também têm os bits por fase `50A1P/50B1P/50C1P` e `50A2P/50B2P/50C2P` (cada fase contra o mesmo pickup).
+- `ORED50T` = qualquer `50xnT` ativo.
+- *Aproximações*: partida e queda ocorrem dentro do ciclo de varredura de 4 ms (o relé real leva 0,25 a 1,5 ciclo, figuras 4.4 e 4.5);
+  não há detector de pico para TC saturado; `EDIR`/elementos direcionais 67 não existem (os bits `67xx` ficam sempre em 0).
+
+### Temporizado (51)
+
+- Elementos `51AT/51BT/51CT` (cada fase), `51P1T/51P2T` (máxima de fase), `51QT` (3I2), `51N1T/51N2T` (`IN`) e `51G1T/51G2T` (`IG`).
+  Bits `51xP` (partida), `51xT` (fim da curva) e `51xR` (rearmado: sem partida e disco em zero).
+- Curvas **U1–U5, C1–C5, E1–E3** com as equações das tabelas 4.20 a 4.22: `tp = TD·(A/(M^p − 1) + B)`, `M = I/pickup > 1`.
+  Com `51SAT = Y` (global, padrão) o múltiplo é limitado a 30; `51SAT = N` usa o múltiplo real.
+- `51xCT` soma um tempo constante; `51xMR` é o piso do tempo da curva: `t = max(tp, MR) + CT`. *(Ordem exata no firmware não está no manual: premissa.)*
+- O avanço é integrado a cada ciclo (`progress += dt / t(M)`), então variações de corrente durante a contagem são tratadas.
+- **Reset**: `51xRS = N` rearma 1 ciclo após a queda da partida; `51xRS = Y` (eletromecânico) recua o disco com `tr = TD·R/(1 − M²)`
+  (`1 − M` na C4), usando o múltiplo atual — a contagem parcial é mantida se a corrente voltar antes do rearme.
+- `ORED51T` = qualquer `51xT` ativo. `51xTC` abre o "interruptor de torque": falso = elemento desabilitado e reiniciado.
+
+### Grandezas
+
+- `IMAX` (maior corrente de fase), `IA/IB/IC`, `IN` = soma fasorial ÷ `CTRN` (TC de neutro em conexão residual), `IG` = soma fasorial ÷ `CTR`,
+  `3I2` = |IA + a²·IB + a·IC| ÷ `CTR`. Pickups em A **secundários** (primário ÷ CTR). Disjuntor aberto ou injeção analógica desligada: corrente zero.
+- Tensões (27/59) e frequência (81D): tempo definido, mesmo modelo de partida/atuação.
+- **Não implementados**: elementos direcionais (67), 49 (térmico), 46 (desbalanço), HIF, 50INC (falha incipiente de cabo, figuras 4.6/4.7),
+  partida a frio, falha de disjuntor interna (`52ABF`), sincronismo (25), 78, 55, bloqueio por harmônicas, `E27I/E59I`, demanda.
 
 ## TRIP, CLOSE e religamento
 
@@ -63,7 +86,8 @@ portas (`P1–P4`, `PF`) e tela touchscreen (`SET_HMI.TXT`).
   em grandezas **primárias**; no modo secundário a interface converte com TC (`CTR`) e TP (`PTR`). A corrente de neutro
   (`IN`/`IG`) é a soma fasorial das três fases. As componentes de sequência da janela de injeção são calculadas na interface
   a partir dos valores inseridos.
-- **Injeção analógica ligada/desligada** (`analog_on`, chave na tela inicial): desligada, o relé enxerga correntes e tensões
+- **Desligar ao atuar saída** (`analog_off_on_output`, padrão desligado): na subida de qualquer `OUTxxx` a injeção analógica é desligada (vale no ciclo seguinte; o usuário religa pela chave). Se a saída é a **bobina de abertura** e o disjuntor ainda está fechado, o corte espera o disjuntor abrir, para que a corrente persista durante o tempo de abertura (alarmes `SV13..SV15`/`LT18..LT20`).
+- **Injeção analógica ligada/desligada** (`analog_on`, **inicia desligada**; chave na tela inicial): desligada, o relé enxerga correntes e tensões
   zero (e P/Q/S zero); o disjuntor e as entradas digitais não mudam. A frequência informada é mantida.
 - Falta (só pela API `/fault`; a interface não tem mais o atalho): tipos AG, BG, CG, AB, BC, CA, ABC, com corrente configurável, **permanente** ou **transitória** (some ao abrir).
   Ela **sobrepõe** as correntes inseridas nas fases envolvidas (ângulo -75°, -45°…) e afunda as tensões; sem impedância de
@@ -71,8 +95,8 @@ portas (`P1–P4`, `PF`) e tela touchscreen (`SET_HMI.TXT`).
 - **Entrada do 52A (IN101)**: com *simular o estado do disjuntor automaticamente* ligado, ela acompanha o modelo do disjuntor
   (e alternar a entrada move o disjuntor). Desligado, a entrada é livre (útil para testar 52A divergente do estado físico),
   e o disjuntor continua a abrir/fechar pelas bobinas e pelos botões *Abrir/Fechar (campo)*.
-- A resolução de tempo é de **10 ms** por varredura (a 1×). Em velocidades maiores, o passo cresce proporcionalmente
-  (ex.: 10× → 100 ms); use 1× para medir tempos de atuação.
+- A resolução de tempo é de **4 ms** por varredura (a 1×). Em velocidades maiores, o passo cresce proporcionalmente
+  (ex.: 10× → 40 ms); use 1× para medir tempos de atuação.
 
 ## Painel frontal
 
