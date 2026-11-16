@@ -44,7 +44,7 @@ Base: manual do SEL-751, seção "Overcurrent Elements" / "Time-Overcurrent Elem
 - `50P1` e `50P2` também têm os bits por fase `50A1P/50B1P/50C1P` e `50A2P/50B2P/50C2P` (cada fase contra o mesmo pickup).
 - `ORED50T` = qualquer `50xnT` ativo.
 - *Aproximações*: partida e queda ocorrem dentro do ciclo de varredura de 4 ms (o relé real leva 0,25 a 1,5 ciclo, figuras 4.4 e 4.5);
-  não há detector de pico para TC saturado; `EDIR`/elementos direcionais 67 não existem (os bits `67xx` ficam sempre em 0).
+  não há detector de pico para TC saturado; o controle direcional (`EDIR`, 67) está descrito em [Controle direcional](#controle-direcional-67).
 
 ### Temporizado (51)
 
@@ -63,8 +63,49 @@ Base: manual do SEL-751, seção "Overcurrent Elements" / "Time-Overcurrent Elem
 - `IMAX` (maior corrente de fase), `IA/IB/IC`, `IN` = soma fasorial ÷ `CTRN` (TC de neutro em conexão residual), `IG` = soma fasorial ÷ `CTR`,
   `3I2` = |IA + a²·IB + a·IC| ÷ `CTR`. Pickups em A **secundários** (primário ÷ CTR). Disjuntor aberto ou injeção analógica desligada: corrente zero.
 - Tensões (27/59) e frequência (81D): tempo definido, mesmo modelo de partida/atuação.
-- **Não implementados**: elementos direcionais (67), 49 (térmico), 46 (desbalanço), HIF, 50INC (falha incipiente de cabo, figuras 4.6/4.7),
+- **Não implementados**: 49 (térmico), 46 (desbalanço), HIF, 50INC (falha incipiente de cabo, figuras 4.6/4.7),
   partida a frio, falha de disjuntor interna (`52ABF`), sincronismo (25), 78, 55, bloqueio por harmônicas, `E27I/E59I`, demanda.
+
+## Controle direcional (67)
+
+Implementado em `backend/app/directional.py` a partir da seção "Directional Control" do manual (figuras 4.26 a 4.61, tabelas 4.23 a 4.36).
+A cada varredura, depois das medidas e antes dos elementos 50/51, o módulo calcula os bits direcionais do Relay Word e os bits de controle por nível
+(`P1DIR…P4DIR`, `N1DIR…N4DIR`, `G1DIR…G4DIR`, `Q1DIR…Q4DIR`). Cada elemento 50/51 do nível correspondente só funciona se o seu bit `xnDIR` for 1.
+
+### Ajustes lidos (grupo ativo)
+
+| Ajuste | Uso |
+|---|---|
+| `EDIR` | `N` (padrão): tudo não direcional, os bits `xnDIR` valem 1. `Y`: usa os ajustes do usuário. `AUTO` / `AUTO2`: calcula `50QFP/50QRP/Z2F/Z2R/a2/k2/50GFP/50GRP/Z0F/Z0R/a0/Z0MTA` (tabelas 4.31 e 4.32, com `INOM`, `Z1MAG`, `Z0MAG`, `Z0ANG`; `INOM` lido do grupo ou do global, padrão 5 A). |
+| `DIR1…DIR4` | `F` frente, `R` reverso, `N` não direcional, por nível. Todos os 51 seguem o nível 1; os 50 seguem o nível `n` (tabela 4.34). |
+| `ORDER` | Prioridade dos elementos de terra (`Q V I S P U`, `OFF`). Escolhe-se o primeiro cuja habilitação interna está ativa (tabela 4.24). `ORDER = OFF` (ou `P` sozinho) deixa o residual não direcional; `OFF` deixa o neutro não direcional. |
+| `EFWDLOP` | Com perda de potencial (`LOP`), os elementos ajustados para frente passam a atuar sem direção (forçam `DIRxF`). |
+| `VNOM = OFF` | Fase e sequência negativa ficam não direcionais. |
+| Limiares | `50QFP/50QRP`, `a2`, `k2`, `Z2F/Z2R`, `50GFP/50GRP`, `a0`, `Z0F/Z0R`, `Z0MTA`, `50NFP/50NRP`, `a0N`, `59RES`, `DIRWFP/DIRWRP/DIRWD`, `50PDIRP`, `EDIRIV` (SELogic), `Z1ANG`, `ELOAD` e `ZLF/PLAF/NLAF/ZLR/PLAR/NLAR`, `EPHI1/2` e demais ajustes PHI. Faltando um ajuste, vale o padrão de fábrica da tabela 4.28 (5 A; ×1/5 em corrente e ×5 em impedância para TC de 1 A). |
+
+### Elementos
+
+- **Q (seq. negativa, 4.29/4.32/4.57):** `50QF/50QR` (|3I2| ≥ 50QFP/50QRP), `DIRQE` (`|I2| > a2·|I1|`, sem `LOP`, `VNOM ≠ OFF`), `DIRQGE` (`|I2| > k2·|I0|`). `Z2 = Re[V2·(I2∠Z1ANG)*]/|I2|²`; à frente se `Z2 <` limiar direto (`0,75·Z2F − 0,25·|V2/I2|`, ou `1,25·Z2F − …` se `Z2F > 0`), reverso se `Z2 >` limiar reverso (`0,75·Z2R + 0,25·|V2/I2|` ou `1,25·Z2R + …` se `Z2R < 0`). Gera `FDIRQ/RDIRQ` (fase/seq. neg.) e `FDIRQG/RDIRQG` (terra).
+- **V (seq. zero por tensão, 4.30/4.33):** `50GF/50GR` (|IG| ≥ 50GFP/50GRP), `DIRVE` (`|I0| > a0·|I1|`, `EDIRIV`, sem `LOP` salvo `VSCONN = 3V0`); `Z0 = Re[3V0·(IG∠Z0MTA)*]/|IG|²` com os mesmos limiares (`Z0F/Z0R`). `3V0` = VA + VB + VC calculado.
+- **S (baixa impedância, 4.31/4.35) e U (isolado/alta impedância, 4.37):** usam `3V0` e o canal IN (`IN` = soma fasorial das correntes de fase ÷ `CTRN`). `S`: `Z0F/Z0R` ajustados à base do IN (× `CTRN/CTR`). `U`: `Z0F = −0,10 Ω`, `Z0R = +0,10 Ω` e ângulo fixo de −90°. Habilitação `DIRNE`: `|IN| > a0N·|I1|`, sem `DIRQGE`/`DIRVE`, `EDIRIV`. Bits `LZFWD/LZREV` e `UGFWD/UGREV`.
+- **P (wattmétrico, Petersen, 4.36):** `P0 = Re(3V0·IN*)`; à frente se `P0 < −(0,9375·DIRWFP + 0,0625·|3V0·IN|)`, reverso se `P0 > 0,9375·DIRWRP + 0,0625·|3V0·IN|`, com `|3V0| > 59RES`, `|IN| > 0,005 A`, atraso `DIRWD` e bloqueio de 30 ciclos após qualquer mudança do 52A. Bits `FDIRWI/RDIRWI` (instantâneos) e `FDIRW/RDIRW`.
+- **PHI (4.43 a 4.49):** dois níveis (`EPHI1/2`), ângulo `φ = ∠IN − ∠3V0` (0° a 360°), setores `FWD1ANG…FWD2ANG` e `REV1ANG…REV2ANG`, linhas de torque máximo `FWDMTA/REVMTA`, magnitude `|IN|·|cos(φ − MTA)| ≥ PHIFWDP/PHIREVP` (`OFF` desabilita), atraso `PHIDLY`, controle de torque `PHITCn`. Bits `PHIFWDn/PHIREVn`, `EPHIn`; com `PHIROUT = Y` (e `ORDER` contendo `P` ou `U`) substituem `FDIRN/RDIRN`, escolhidos por `PHI2SEL`.
+- **Fase (4.58/4.59):** `50PDIR` (todas as correntes de linha ≥ `√3·50PDIRP`; fixo em 0,1·INOM com `ELOAD = Y`). Positiva: `FDIRP` quando `Re[V1·(I1∠Z1ANG)*] > 0` (e `RDIRP` quando < 0), com a sequência negativa tendo prioridade. Polarização `V1` com memória de 0,1 s. `DIRPF = FDIRQ OU FDIRP OU (EFWDLOP E LOP)`, `DIRPR = RDIRQ OU RDIRP`; nunca os dois ao mesmo tempo.
+- **Load-encroachment (`ELOAD`):** `ZLOAD = ZLOUT OU ZLIN`; `Z1 = V1/I1`, carga à frente quando `|Z1| ≥ ZLF` e o ângulo está entre `NLAF` e `PLAF` (reversa: `|Z1| ≥ ZLR`, entre `PLAR` e `NLAR`). Desabilita o elemento de sequência positiva.
+- **Falta estável (`DIRSTAB`, 4.50):** `|3V0| > 5 V` e variação < 1 V entre varreduras, por 1 ciclo.
+- **Roteamento e níveis (4.39 a 4.42, 4.60, 4.61):** `DIRGF/DIRGR` (residual) e `DIRNF/DIRNR` (neutro) combinam os elementos de terra; cada nível `n` libera quando (`DIRn = F` e frente) ou (`DIRn = N`) ou (`DIRn = R` e reverso).
+
+### Efeito nos elementos 50/51
+
+Quando o nível está bloqueado (`xnDIR = 0`) o elemento é desabilitado como no controle de torque (partida e atuação caem, o disco do 51 rearma). Os bits `67xnP/67xnT` espelham `50xnP/50xnT` (o relé nomeia as versões controladas por sentido como 67); a coluna **Sentido** da tabela de proteção mostra `LIBERA/BLOQUEIA`.
+A perda de potencial é acionada pelo usuário (chave **Perda de potencial (LOP)** nos auxiliares), pois a lógica de detecção (figura 4.110) não consta do material.
+
+### Limitações
+
+- **Canal IN polarizado por corrente (`I`)** não existe: a simulação não tem um TC de polarização independente (o IN é a soma das fases); `DIRIE`, `FDIRI/RDIRI` ficam em 0.
+- Sem condutância incremental (`FDIRC/RDIRC`) e sem a falta intermitente direcional (IGF, usa amostras brutas de `3V0` e `IN`).
+- `3V0` é sempre o calculado (VA + VB + VC); não há canal `VS`. Com `DELTA_Y = DELTA` e `VSCONN = VS` os elementos de sequência zero ficam indisponíveis; `GNDSW` (troca IN↔IG) não é simulada.
+- A região de carga (figura 4.74) e a memória de polarização usam a convenção padrão da SEL, não as figuras originais.
 
 ## TRIP, CLOSE e religamento
 

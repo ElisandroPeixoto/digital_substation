@@ -41,7 +41,7 @@ portas (`P1–P4`, `PF`), touchscreen (`SET_HMI.TXT`).
 backend/    Python 3.12 + FastAPI (+ olefile, pytest, httpx)
 frontend/   React 18 + TypeScript + Vite (sem biblioteca de UI; CSS puro em src/styles.css)
 assets/     identidade visual do Eclipse (eclipse-logo/icon/…) e relay-front-reference.png (referência do frontal)
-docs/       um .md por app (digitalrelay.md, phaseengine.md, systemlab.md) + arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
+docs/       um .md por app (digitalrelay.md, phaseengine.md, systemlab.md), guias didáticos (funcoes-50-51.md, funcao-direcional-67.md) + arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
 Padrões SEL-751.rdb                 arquivo de exemplo (20 ajustes) – usado pelos testes
 Padrões SEL-751 (extraído)/         extração manual feita no início (dado de referência, não é usada pelo código)
 run.ps1                             instala, compila o frontend e sobe em http://127.0.0.1:8000
@@ -55,6 +55,7 @@ run.ps1                             instala, compila o frontend e sobe em http:/
 | `settings.py` | Parser de `set_*.txt` (`[INFO]`, `[classe]`, `NOME,"valor"` com `""` escapado). `RelaySettings.sections[classe]`. |
 | `selogic.py` | Interpretador SELogic. **Sem curto-circuito** (as bordas `R_TRIG/F_TRIG` precisam ser avaliadas todo ciclo). Primeira avaliação nunca gera borda. |
 | `curves.py` | Curvas U1–U5 / C1–C5 / E1–E3 (equações do manual, tabelas 4.20–4.22), reset eletromecânico, saturação `51SAT` (M ≤ 30). |
+| `directional.py` | Controle direcional (67): Q/V/S/U/P, PHI, fase por seq. positiva, `EDIR`/`ORDER`/`DIRn`, bits `xnDIR` que habilitam os 50/51 (`_Element.dir_key`). Roda **antes** dos elementos em cada `step`; `LOP` é uma chave do usuário (`SimConfig.lop`). |
 | `protection.py` | Elementos 50/51/27/59/81D do grupo ativo; pickup `OFF` = desabilitado (bits registrados com 0). 50: bits `50xnP/T` (+ `50A/B/C1P`, `50A/B/C2P`), `50xnD = OFF` desabilita; 51: `51xP/T/R`, CT, MR, reset 1 ciclo ou EM; `ORED50T/ORED51T`. |
 | `fieldsim.py` | Fasores, tipos de falta (AG BG CG AB BC CA ABC), afundamento, modelo do disjuntor, presets. |
 | `engine.py` | `RelayEngine.step(dt)`: ciclo de varredura, TRIP, CLOSE, religamento 79, SV/SC/MV/LT/OUT, grupos, SER, snapshots. |
@@ -122,7 +123,7 @@ Decisões que afetam o comportamento (verificar contra relé real se possível):
   `NOT_SUPPORTED`; `Select→Operate` vale 10 s simulados.
 - Resolução 4 ms a 1× (múltiplos nas outras velocidades: 10× → 40 ms): os alarmes de tempo de abertura (100/120/140 ms) são mais confiáveis em 1×.
 
-Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: 67, 49, 46, 50INC, HIF, 52ABF interno, 25, 78, 55,
+Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: IGF/condutância incremental/canal IN por corrente do 67, 49, 46, 50INC, HIF, 52ABF interno, 25, 78, 55,
 `E27I/E59I`, demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em rede.
 
 ## Convenções e cuidados
@@ -143,7 +144,7 @@ Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: 67, 4
 
 `conftest.py` (fixtures `archive`, `feeder`; helpers `run`, `tap`), `test_selogic.py`, `test_rdb_settings.py`,
 `test_engine_feeder.py` (cenários do padrão Alimentador v1.24: falta/religamento/bloqueio, dois toques, local/remoto, DNP,
-grupos, alarmes de abertura, debounce, LEDs), `test_api.py` (TestClient com upload real), `test_overcurrent.py` (50/51 com ajuste sintético, não depende do .rdb).
+grupos, alarmes de abertura, debounce, LEDs), `test_api.py` (TestClient com upload real), `test_overcurrent.py` (50/51 com ajuste sintético, não depende do .rdb), `test_directional.py` (controle direcional com sinais montados por componentes simétricas).
 Testes que dependem do `.rdb` são ignorados se o arquivo da raiz não existir. Ao mudar o motor, rode a suíte inteira.
 
 ## Verificação manual rápida
@@ -156,7 +157,7 @@ pickups em `OFF`.
 
 ## Ideias / próximos passos
 
-Elementos faltantes (67, 49, 46, 52BF interno); comparar tempos com relé real; WebSocket no lugar do polling;
+Elementos faltantes (49, 46, 52BF interno; do 67: canal IN por corrente, IGF); comparar tempos com relé real; WebSocket no lugar do polling;
 pilha DNP3 real (ex.: `opendnp3`) para testar com um mestre externo; GOOSE/seletividade lógica (hoje só sinalizados);
 validação das ordens de avaliação (SV/LT) e da prioridade RESET; suporte a outros relés do `.rdb` com bobinas/entradas atípicas
 (heurísticas em `engine._detect_coils` e `_default_input`).

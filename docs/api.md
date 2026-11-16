@@ -27,7 +27,7 @@ Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclip
 | GET | `/sessions/{sid}/panel` | LEDs, display, estado do disjuntor, entradas, **saídas digitais**, medição (módulo/ângulo, P/Q/S) e configuração da simulação. |
 | POST | `/sessions/{sid}/button` | `{button: "PB1".."PB8" \| "TARGET_RESET", pressed}`. Pressionar e soltar são eventos separados. |
 | POST | `/sessions/{sid}/inputs` | `{name, value}` – entrada digital. Com `breaker_auto` ligado, a entrada do 52A (`IN101`) move o disjuntor; desligado, só muda o estado da entrada. |
-| POST | `/sessions/{sid}/sim` | `{patch: {...}}` – fasores injetados **em valores primários** (`ia_mag`, `ia_ang`, `ib_*`, `ic_*`, `va_*`, `vb_*`, `vc_*`: módulo em A / V fase-neutro, ângulo em graus), `freq`, `vdc`, `open_ms`, `close_ms`, `breaker_auto`, `analog_on` (liga/desliga a injeção analógica), `halarm`, links… |
+| POST | `/sessions/{sid}/sim` | `{patch: {...}}` – fasores injetados **em valores primários** (`ia_mag`, `ia_ang`, `ib_*`, `ic_*`, `va_*`, `vb_*`, `vc_*`: módulo em A / V fase-neutro, ângulo em graus), `freq`, `vdc`, `open_ms`, `close_ms`, `breaker_auto`, `analog_on` (liga/desliga a injeção analógica), `lop` (perda de potencial simulada), `halarm`, links… |
 | POST | `/sessions/{sid}/breaker` | `{closed}` – move o disjuntor no campo (posição física), qualquer que seja o modo da entrada 52A. |
 | POST / DELETE | `/sessions/{sid}/fault` | `{type: AG\|BG\|CG\|AB\|BC\|CA\|ABC, current?, persistent?}` / elimina a falta. |
 | POST | `/sessions/{sid}/preset` | `{name}` – `normal`, `overload` (carga equilibrada) ou `ag`, `bc`, `abc` (faltas). |
@@ -36,7 +36,7 @@ Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclip
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/sessions/{sid}/state` | Entradas, saídas, latches, SV, contadores, MV, proteção, religamento, Relay Word, analógicos, bits desconhecidos. |
+| GET | `/sessions/{sid}/state` | Entradas, saídas, latches, SV, contadores, MV, proteção, **controle direcional (`directional`)**, religamento, Relay Word, analógicos, bits desconhecidos. |
 | GET / DELETE | `/sessions/{sid}/ser?since=N` | Registro sequencial de eventos / limpa. |
 | GET | `/sessions/{sid}/dnp?since=N` | Pontos BO/BI/AI, eventos (após `N`), registro de comandos, seleção ativa. |
 | DELETE | `/sessions/{sid}/dnp/events` | Limpa os eventos DNP3 (a numeração continua). |

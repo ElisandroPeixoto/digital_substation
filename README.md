@@ -112,6 +112,11 @@ Um arquivo por aplicativo, com todos os detalhes de funcionamento:
 - [docs/phaseengine.md](docs/phaseengine.md) – PhaseEngine (fasores, potências e componentes de sequência)
 - [docs/systemlab.md](docs/systemlab.md) – SystemLab (diagrama unifilar e simulação)
 
+Guias didáticos (conceitos, fórmulas, exemplos e como testar no simulador):
+
+- [docs/funcoes-50-51.md](docs/funcoes-50-51.md) – sobrecorrente instantânea (50) e temporizada (51)
+- [docs/funcao-direcional-67.md](docs/funcao-direcional-67.md) – função direcional (67)
+
 Documentos gerais e do DigitalRelay:
 
 - [docs/arquitetura.md](docs/arquitetura.md) – módulos e ciclo de varredura
@@ -124,7 +129,7 @@ Documentos gerais e do DigitalRelay:
 Aplicativo 100% frontend (`frontend/src/systemlab/`). O usuário monta um **diagrama unifilar**: na barra lateral esquerda
 (toolbox) estão **Fonte, Barramento, Disjuntor, Chave seccionadora, Transformador, Carga, TP e TC**; arraste para a área
 central, mova/gire (tecla **R**) e **ligue os terminais** (clique em um terminal e depois em outro, ou arraste de um até o
-outro). **Soltar um TC sobre uma ligação** o insere em série (a ligação é dividida em duas). Duplo clique em disjuntor/chave abre ou fecha. **Delete** remove; roda do mouse = zoom; arrastar o fundo = mover a vista.
+outro). **Soltar um TC sobre uma ligação** o insere em série (a ligação é dividida em duas). Duplo clique em disjuntor/chave abre ou fecha. **Delete** remove; roda do mouse = zoom; arrastar no fundo = **selecionar vários elementos** (Shift/Ctrl+clique soma; arraste um deles para mover o grupo, Delete exclui todos); mover a vista = botão do meio/direito ou Espaço + arrastar. Arraste os trechos de uma ligação para reorganizar o desenho e use a caixa "Ocultar nome e dados" de cada elemento para limpar o diagrama.
 Os parâmetros do elemento selecionado (ex.: tensão e potência de curto da fonte, MVA/kV/Z% do trafo, MW/FP da carga, relações
 do TP/TC, estado do disjuntor) ficam no painel à direita, junto com os resultados; sem seleção o painel mostra o resumo do
 sistema. O botão "Carregar exemplo" cria um sistema pronto. O diagrama é salvo no navegador (`systemlab.diagram`).

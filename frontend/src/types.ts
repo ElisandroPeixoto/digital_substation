@@ -87,6 +87,7 @@ export interface SimConfig {
   analog_off_outputs: string[]
   analog_on: boolean
   halarm: boolean
+  lop: boolean
   linka: boolean
   linkb: boolean
   tsntpp: boolean
@@ -171,6 +172,21 @@ export interface StateElement {
   t_op?: number | null       // tempo total previsto da curva (51), em s
   reset_bit?: string         // 51xR
   reset?: boolean
+  dir_bit?: string           // bit de controle direcional do nível (ex.: P1DIR)
+  dir_ok?: boolean
+}
+export interface DirectionalInfo {
+  enabled: boolean
+  edir?: string
+  order?: string
+  selected?: string
+  vnom_off?: boolean
+  efwdlop?: boolean
+  dir?: string[]
+  levels?: Record<string, boolean[]>
+  bits?: Record<string, boolean>
+  settings?: Record<string, number | string>
+  quantities?: Record<string, number | null>
 }
 export interface StateData {
   time: number
@@ -183,6 +199,7 @@ export interface StateData {
   counters: { name: string; value: number; preset: number; q: number; cu: string; comment: string }[]
   math: { name: string; expr: string; comment: string; value: number }[]
   protection: { elements: StateElement[]; disabled: number }
+  directional: DirectionalInfo
   trip_close: Record<string, string | number | string[] | null>
   recloser: {
     enabled: boolean

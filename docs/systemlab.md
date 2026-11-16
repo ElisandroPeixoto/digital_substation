@@ -63,12 +63,20 @@ Campos numéricos aceitam vírgula ou ponto; o valor é aplicado enquanto se dig
 - **Carregar exemplo** (botão da barra superior) cria um sistema pronto: fonte → disjuntor → barra → transformador → barra →
   disjuntor → TC → carga, com um TP na barra de saída.
 
+### Seleção múltipla
+
+- **Retângulo de seleção:** arraste com o botão esquerdo no fundo do diagrama; todo elemento tocado pelo retângulo é selecionado enquanto você arrasta.
+- **Shift/Ctrl+clique** em um elemento o inclui ou retira da seleção (com Shift/Ctrl pressionado, o retângulo soma à seleção atual). **Ctrl+A** seleciona todos.
+- **Mover em grupo:** arraste qualquer elemento selecionado e o grupo inteiro se move junto (mantendo a grade de 20 px); as ligações acompanham.
+- **Excluir / girar em grupo:** **Delete** (ou o botão "Excluir N") remove todos os selecionados e as ligações deles; **R** gira cada um no próprio lugar.
+- Com mais de um elemento selecionado, o painel da direita lista os nomes e oferece Girar/Excluir.
+
 ### Mover, girar, excluir
 
-- **Mover:** arrastar o elemento (fica na grade). Enquanto arrasta, só o **símbolo** é desenhado (somem borda de seleção, nome,
+- **Mover:** arrastar o elemento (fica na grade; se ele estiver numa seleção múltipla, move o grupo). Enquanto arrasta, só o **símbolo** é desenhado (somem borda de seleção, nome,
   valores e terminais). As ligações acompanham.
 - **Girar:** botão "↻ Girar" ou tecla **R** (passos de 90° no sentido horário). Os nomes e valores ficam sempre na horizontal.
-- **Excluir:** botão "Excluir" ou **Delete/Backspace**. Excluir um elemento remove também as ligações dele.
+- **Excluir:** botão "Excluir" ou **Delete/Backspace**. Excluir elementos remove também as ligações deles.
 - **Esc** cancela a ligação em andamento e limpa a seleção.
 
 ### Ligar terminais
@@ -85,6 +93,18 @@ e o painel permite excluí-la.
 
 No barramento, os terminais só aparecem quando há uma ligação em andamento, com o barramento selecionado ou com o mouse sobre ele.
 
+### Desenho das ligações
+
+Por padrão a ligação segue um trajeto automático em "degrau". Para reorganizar o desenho:
+
+- **Arraste um trecho** da ligação (a ligação selecionada mostra um quadradinho no meio de cada trecho): o trecho se desloca na perpendicular, na grade de 20 px. Nos trechos presos a um terminal, o arraste cria um cotovelo, de modo que o terminal não sai do lugar.
+- O trajeto manual é guardado na ligação (`via`, no diagrama salvo) e acompanha os elementos: se os dois extremos se movem juntos (seleção múltipla), os pontos vão com eles; se só um extremo se move, os cotovelos são ajustados automaticamente.
+- **Duplo clique** na ligação (ou o botão "Trajeto automático" do painel) volta ao trajeto automático.
+
+### Ocultar nome e dados
+
+Cada elemento tem a caixa **Ocultar nome e dados no diagrama** no painel de propriedades (útil para deixar o desenho limpo). Com vários elementos selecionados, o painel tem os botões "Ocultar/Mostrar nomes e dados". Os resultados continuam disponíveis no painel ao selecionar o elemento.
+
 ### Estado de chaves
 
 **Duplo clique** em disjuntor ou seccionadora abre/fecha, ou use a caixa "Fechado/Fechada" do painel. O resultado é recalculado
@@ -93,7 +113,7 @@ imediatamente.
 ### Vista
 
 - **Zoom:** roda do mouse (30 % a 250 %, centrado no cursor).
-- **Mover a vista:** arrastar o fundo (clicar no fundo também limpa a seleção).
+- **Mover a vista:** arrastar o fundo com o **botão do meio ou direito**, ou **Espaço + arrastar** (o botão esquerdo no fundo desenha o retângulo de seleção; clicar no fundo limpa a seleção).
 - **Centralizar vista:** volta a 100 % e à posição inicial.
 - **Mostrar valores:** liga/desliga os resultados escritos sobre o diagrama.
 - **Limpar tudo:** apaga o diagrama (pede confirmação se houver elementos).

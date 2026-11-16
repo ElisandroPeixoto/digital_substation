@@ -25,6 +25,7 @@ from .describe import build_labels, normal_state
 from .dnp import DnpMap
 from .fieldsim import A_OP, A_OP2, FieldSim
 from .panel import Panel
+from .directional import Directional
 from .protection import build_elements, update_ored
 from .selogic import Expr, split_comment
 from .settings import RelaySettings
@@ -132,6 +133,8 @@ class RelayEngine:
         self.math_keys: list[str] = []
         self.out_keys: list[str] = []
         self.elements: list = []
+        self.sec_I: dict[str, complex] = {p: 0j for p in 'ABC'}   # fasores secundários (A / V)
+        self.sec_V: dict[str, complex] = {p: 0j for p in 'ABC'}
         self.n_off = 0
         self.ser_log: deque[dict] = deque(maxlen=3000)
         self.ser_seq = 0
@@ -144,6 +147,7 @@ class RelayEngine:
         self.close_outs: list[str] = []
         self.bk_input = "IN101"
         self.panel = Panel(self)
+        self.directional = Directional(self)
         self.dnp = DnpMap(self)
         self._first_scan = True
         self._setup_inputs()
@@ -194,6 +198,7 @@ class RelayEngine:
         self.ctrn = st.number(self.group_cls, "CTRN", self.ctr) or self.ctr
         self.ptr = st.number(self.group_cls, "PTR", 1.0) or 1.0
         self.vnom = st.number(self.group_cls, "VNOM", 115.0) or 115.0
+        self.directional.rebuild()
         self.elements, self.n_off = build_elements(self)
         self._build_logic()
         self.panel.rebuild()
@@ -361,6 +366,7 @@ class RelayEngine:
         self._consume_event()
         self._update_inputs(dt)
         self._update_meas(dt)
+        self.directional.update(dt)
         for el in self.elements:
             el.update(dt)
         update_ored(self, self.elements)
@@ -397,6 +403,7 @@ class RelayEngine:
         v = self.vals
         sim = self.field.cfg
         v["HALARM"] = 1.0 if sim.halarm else 0.0
+        v["LOP"] = 1.0 if sim.lop else 0.0
         v["ENABLED"] = 0.0 if sim.halarm else 1.0
         v["LINKA"], v["LINKB"] = float(sim.linka), float(sim.linkb)
         v["TSNTPP"], v["TSNTPB"] = float(sim.tsntpp), float(sim.tsntpb)
@@ -421,6 +428,8 @@ class RelayEngine:
         m = self.meas
         ia, ib, ic = abs(I["A"]), abs(I["B"]), abs(I["C"])
         resid = I["A"] + I["B"] + I["C"]
+        self.sec_I = {p: I[p] / self.ctr for p in "ABC"}
+        self.sec_V = {p: V[p] / self.ptr for p in "ABC"}
         i2 = I["A"] + A_OP2 * I["B"] + A_OP * I["C"]
         m["IA"], m["IB"], m["IC"] = ia / self.ctr, ib / self.ctr, ic / self.ctr
         m["IMAX"] = max(m["IA"], m["IB"], m["IC"])
@@ -783,6 +792,7 @@ class RelayEngine:
             "inputs": inputs, "outputs": outputs, "latches": latches, "timers": timers, "counters": counters,
             "math": maths,
             "protection": {"elements": [e.info() for e in self.elements], "disabled": self.n_off},
+            "directional": self.directional.info(),
             "trip_close": {
                 "TRIP": self.b("TRIP"), "TR": self.b("TR"), "TR_expr": self.expr_text(g, "TR"), "ULTRIP": self.b("ULTRIP"),
                 "CLOSE": self.b("CLOSE"), "CL": self.b("CL"), "CL_expr": self.expr_text(g, "CL"), "CF": self.b("CF"),

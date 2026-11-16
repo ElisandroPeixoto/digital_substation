@@ -5,6 +5,7 @@ Aplicativo do Eclipse que **simula o relé SEL-751** a partir de um arquivo **`.
 
 Este documento descreve o funcionamento do aplicativo de ponta a ponta. Documentos complementares:
 
+- [`funcoes-50-51.md`](funcoes-50-51.md) e [`funcao-direcional-67.md`](funcao-direcional-67.md) – guias didáticos das funções de proteção;
 - [`logica-simulada.md`](logica-simulada.md) – premissas, aproximações e limitações da simulação (referência detalhada);
 - [`api.md`](api.md) – endpoints REST do backend;
 - [`arquitetura.md`](arquitetura.md) – módulos do backend e do frontend e o ciclo de varredura;
@@ -161,7 +162,8 @@ variáveis matemáticas, saídas), globais `G` (troca de grupo, filtros das entr
   constante `CT`, piso `MR`, reset em 1 ciclo ou eletromecânico, `ORED51T`.
 - **27/59/81D** de tempo definido.
 - Grandezas: `IMAX`, `IA/IB/IC`, `IN` (soma fasorial ÷ `CTRN`), `IG` (÷ `CTR`), `3I2`; pickups em A **secundários**.
-- **Não implementados:** direcional (67), 49, 46, 50INC, HIF, 52ABF interno, 25, 78, 55, `E27I/E59I`, demanda, `79SKP/79SEQ/79DLS/79CLSD`.
+- **Direcional (67):** `EDIR = Y/AUTO/AUTO2`, `DIR1…DIR4`, `ORDER` (Q, V, S, P, U; o canal IN por corrente `I` não), PHI, fase por sequência positiva com memória e `ELOAD`; veja a seção "Controle direcional (67)" de [`logica-simulada.md`](logica-simulada.md). Seção própria em **Variáveis internas** e chave **Perda de potencial (LOP)** nos auxiliares.
+- **Não implementados:** 49, 46, 50INC, HIF, 52ABF interno, 25, 78, 55, `E27I/E59I`, demanda, `79SKP/79SEQ/79DLS/79CLSD`.
 
 ### TRIP, CLOSE e religamento
 

@@ -33,14 +33,22 @@ class _Element:
         self.eng = eng
         self.base = base
         self.tc_key = tc_key
+        self.dir_key = ""          # bit de controle direcional (ex.: P1DIR); vazio = não direcional
         self.pk = False
         self.timed = False
         self.measured = 0.0
 
-    def tc(self) -> bool:
+    def tc_only(self) -> bool:
         if not self.tc_key:
             return True
         return bool(self.eng.ev(self.eng.group_cls, self.tc_key)) if self.eng.group_has(self.tc_key) else True
+
+    def dir_ok(self) -> bool:
+        """Controle direcional (figuras 4.41, 4.42, 4.60 e 4.61): vale 1 se o nível é não direcional."""
+        return bool(self.eng.vals.get(self.dir_key, 1.0)) if self.dir_key else True
+
+    def tc(self) -> bool:
+        return self.tc_only() and self.dir_ok()
 
     def publish(self) -> None:
         v = self.eng.vals
@@ -65,6 +73,7 @@ class InstOc(_Element):
         self.delay_off = delay is None          # atraso OFF: elemento desabilitado
         self.delay = delay or 0.0
         self.pk_bit, self.t_bit = base + "P", base + "T"
+        self.dir_bits = (f"67{base[2:]}P", f"67{base[2:]}T")   # versões "67" (controladas pelo sentido)
         self.elapsed = 0.0
         self.phase_pk: dict[str, bool] = {}
         if base[2] == "P" and base[3] in "12":
@@ -87,6 +96,8 @@ class InstOc(_Element):
             self.elapsed = 0.0
             self.timed = False
         self.publish()
+        self.eng.vals[self.dir_bits[0]] = 1.0 if self.pk else 0.0
+        self.eng.vals[self.dir_bits[1]] = 1.0 if self.timed else 0.0
 
     def info(self) -> dict:
         return {
@@ -97,6 +108,7 @@ class InstOc(_Element):
             "tc": self.tc_key and self.eng.expr_text(self.eng.group_cls, self.tc_key) or "",
             "measured": round(self.measured, 3), "pickup_bit": self.pk_bit, "timed_bit": self.t_bit,
             "pk": self.pk, "timed": self.timed,
+            "dir_bit": self.dir_key, "dir_ok": self.dir_ok(),
             "progress": min(100.0, 100.0 * self.elapsed / self.delay) if self.delay > 0 and self.pk else (100.0 if self.timed else 0.0),
         }
 
@@ -170,6 +182,7 @@ class TimeOc(_Element):
             "tc": self.tc_key and self.eng.expr_text(self.eng.group_cls, self.tc_key) or "",
             "measured": round(self.measured, 3), "pickup_bit": self.pk_bit, "timed_bit": self.t_bit,
             "pk": self.pk, "timed": self.timed, "progress": round(100.0 * self.progress, 1),
+            "dir_bit": self.dir_key, "dir_ok": self.dir_ok(),
         }
 
 
@@ -258,6 +271,9 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
             if key[:4] in ("50P1", "50P2"):
                 for ph in "ABC":
                     eng.vals.setdefault(f"50{ph}{key[3]}P", 0.0)
+            if _RE_INST.match(key):
+                eng.vals.setdefault(f"67{key[2:-1]}P", 0.0)
+                eng.vals.setdefault(f"67{key[2:-1]}T", 0.0)
         elif _RE_VOLT.match(key):
             eng.vals.setdefault(key[:-1], 0.0)
             eng.vals.setdefault(key[:-1] + "T", 0.0)
@@ -274,8 +290,9 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
             tc = base + "TC"
             # atraso OFF desabilita o elemento (manual, tabelas 4.9 a 4.12)
             delay = None if st.get(gcls, base + "D", "0").strip().upper() == "OFF" else (num(base + "D", 0.0) or 0.0)
-            elements.append(InstOc(eng, base, _INST_QTY[m.group(1)], pickup, delay,
-                                   tc if eng.group_has(tc) else None))
+            el = InstOc(eng, base, _INST_QTY[m.group(1)], pickup, delay, tc if eng.group_has(tc) else None)
+            el.dir_key = f"{m.group(1)}{m.group(2)}DIR"       # nível n: DIRn (P/N/G/Q)
+            elements.append(el)
             continue
         m = _RE_TIME.match(key)
         if m:
@@ -285,10 +302,13 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
                 continue
             base = key[:-1]
             tc = base + "TC"
-            elements.append(TimeOc(
+            el = TimeOc(
                 eng, base, _TIME_QTY[m.group(1)[0]], pickup, st.get(gcls, base + "C", "C1").strip() or "C1",
                 num(base + "TD", 1.0) or 1.0, st.get(gcls, base + "RS", "N").strip().upper() == "Y",
-                num(base + "CT", 0.0) or 0.0, num(base + "MR", 0.0) or 0.0, tc if eng.group_has(tc) else None))
+                num(base + "CT", 0.0) or 0.0, num(base + "MR", 0.0) or 0.0, tc if eng.group_has(tc) else None)
+            letter = "P" if m.group(1)[0] in "ABC" else m.group(1)[0]
+            el.dir_key = f"{letter}1DIR"                      # todos os 51 são controlados pelo nível 1 (DIR1)
+            elements.append(el)
             continue
         m = _RE_VOLT.match(key)
         if m:

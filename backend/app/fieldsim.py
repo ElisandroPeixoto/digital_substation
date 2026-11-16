@@ -56,6 +56,7 @@ class SimConfig:
     fault_type: str | None = None
     fault_current: float = 2400.0
     fault_persistent: bool = True
+    lop: bool = False                  # perda de potencial simulada (bit LOP), acionada pelo usuário
     breaker_auto: bool = True          # 52A (IN101) acompanha o modelo do disjuntor
     analog_on: bool = False            # injeção analógica (inicia DESLIGADA: desligada = tensões e correntes zero)
     analog_off_on_output: bool = False  # desliga a injeção analógica quando uma saída digital (OUTxxx) atua

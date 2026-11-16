@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import { fmt, usePoll } from '../hooks'
-import type { StateData } from '../types'
+import type { DirectionalInfo, StateData } from '../types'
 import { useStamp } from '../prefs'
 import { Bar, Empty, Pill, Section } from './ui'
 
@@ -68,7 +68,7 @@ export function VariablesView({ sid }: { sid: string }) {
         ) : (
           <table className="tbl">
             <thead>
-              <tr><th>Elemento</th><th>Função</th><th>Ajuste</th><th>Medido</th><th>× pickup</th><th>Tempo previsto</th><th>Controle de torque</th><th>Partida</th><th>Atuação</th><th>Reset</th><th>Avanço</th></tr>
+              <tr><th>Elemento</th><th>Função</th><th>Ajuste</th><th>Medido</th><th>× pickup</th><th>Tempo previsto</th><th>Controle de torque</th><th>Sentido</th><th>Partida</th><th>Atuação</th><th>Reset</th><th>Avanço</th></tr>
             </thead>
             <tbody>
               {s.protection.elements
@@ -82,6 +82,7 @@ export function VariablesView({ sid }: { sid: string }) {
                     <td className="mono">{e.measured && e.pickup ? fmt(e.measured / e.pickup, 2) : '–'}</td>
                     <td className="mono">{e.t_op != null ? `${fmt(e.t_op, 2)} s` : '–'}</td>
                     <td className="mono">{e.tc || '1'}</td>
+                    <td>{e.dir_bit ? <Pill on={!!e.dir_ok} onLabel="LIBERA" offLabel="BLOQUEIA" title={e.dir_bit} /> : '–'}</td>
                     <td><Pill on={e.pk} title={e.pickup_bit} /></td>
                     <td><Pill on={e.timed} title={e.timed_bit} /></td>
                     <td>{e.reset_bit ? <Pill on={!!e.reset} title={e.reset_bit} /> : '–'}</td>
@@ -92,6 +93,8 @@ export function VariablesView({ sid }: { sid: string }) {
           </table>
         )}
       </Section>
+
+      <DirectionalSection d={s.directional} />
 
       <Section title="Religamento automático (79)" open={rc.enabled}>
         {!rc.enabled ? (
@@ -222,5 +225,75 @@ export function VariablesView({ sid }: { sid: string }) {
         </div>
       </Section>
     </div>
+  )
+}
+
+const DIR_NAME: Record<string, string> = { F: 'Frente', R: 'Reverso', N: 'Não direcional' }
+const KIND_LABEL: [string, string][] = [['P', 'Fase'], ['Q', 'Seq. negativa'], ['N', 'Neutro'], ['G', 'Residual']]
+const SEL_LABEL: Record<string, string> = {
+  Q: 'Q – seq. negativa', V: 'V – seq. zero (tensão)', I: 'I – canal IN (corrente)', S: 'S – seq. zero, baixa impedância',
+  P: 'P – wattmétrico (Petersen)', U: 'U – isolado/alta impedância',
+}
+const BIT_GROUPS: [string, string[]][] = [
+  ['Habilitações', ['DIRQE', 'DIRQGE', 'DIRVE', 'DIRNE', '50QF', '50QR', '50GF', '50GR', '50NF', '50NR', '50PDIR', 'ZLOAD', 'DIRSTAB', 'LOP']],
+  ['Elementos', ['FDIRQ', 'RDIRQ', 'FDIRP', 'RDIRP', 'FDIRQG', 'RDIRQG', 'FDIRV', 'RDIRV', 'FDIRN', 'RDIRN', 'PHIFWD1', 'PHIREV1', 'PHIFWD2', 'PHIREV2']],
+  ['Sentido (roteamento)', ['DIRPF', 'DIRPR', 'DIRQF', 'DIRQR', 'DIRNF', 'DIRNR', 'DIRGF', 'DIRGR']],
+]
+const SHOWN_SETTINGS = ['50QFP', '50QRP', 'Z2F', 'Z2R', 'a2', 'k2', '50GFP', '50GRP', 'Z0F', 'Z0R', 'a0', 'Z0MTA']
+
+function DirectionalSection({ d }: { d: DirectionalInfo }) {
+  const q = d.quantities ?? {}
+  const n = (k: string, digits = 3) => (q[k] == null ? '–' : fmt(q[k] as number, digits))
+  return (
+    <Section title="Elementos direcionais (controle direcional)" open={!!d.enabled} right={<span className="muted">{d.enabled ? `EDIR = ${d.edir}` : 'EDIR = N'}</span>}>
+      {!d.enabled ? (
+        <Empty>Controle direcional desabilitado (EDIR = N): todos os níveis são não direcionais. Habilite na aba “Ajustes” (grupo ativo): EDIR = Y, AUTO ou AUTO2, com DIR1…DIR4 e ORDER.</Empty>
+      ) : (
+        <>
+          <div className="summary-cards">
+            <div className="mini"><span>Elemento de terra</span><b>{d.selected && d.selected !== '–' ? SEL_LABEL[d.selected] ?? d.selected : 'nenhum habilitado'}</b></div>
+            <div className="mini"><span>ORDER</span><b className="mono">{d.order}</b></div>
+            <div className="mini"><span>Níveis (DIR1…DIR4)</span><b className="mono">{(d.dir ?? []).join(' · ')}</b></div>
+            <div className="mini"><span>VNOM = OFF / EFWDLOP</span><b>{d.vnom_off ? 'sim' : 'não'} / {d.efwdlop ? 'Y' : 'N'}</b></div>
+          </div>
+          <table className="tbl">
+            <thead><tr><th>Controle por nível</th><th>Nível 1</th><th>Nível 2</th><th>Nível 3</th><th>Nível 4</th></tr></thead>
+            <tbody>
+              {KIND_LABEL.map(([k, label]) => (
+                <tr key={k}>
+                  <td>{label} ({k}nDIR)</td>
+                  {(d.levels?.[k] ?? []).map((on, i) => (
+                    <td key={i}><Pill on={on} onLabel="LIBERA" offLabel="BLOQUEIA" title={`${k}${i + 1}DIR — DIR${i + 1} = ${DIR_NAME[(d.dir ?? [])[i]] ?? ''}`} /></td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {BIT_GROUPS.map(([title, names]) => (
+            <div key={title}>
+              <h4>{title}</h4>
+              <div className="chips">
+                {names.map((b) => <span key={b} className={`chip ${d.bits?.[b] ? 'on' : ''}`} title={b}>{b}</span>)}
+              </div>
+            </div>
+          ))}
+          <h4>Grandezas (secundárias)</h4>
+          <table className="tbl">
+            <tbody>
+              <tr><td>|I1| / |I2| / 3I0 / 3I2</td><td className="mono">{n('I1')} · {n('I2')} · {n('3I0')} · {n('3I2')} A</td></tr>
+              <tr><td>|V1| / |V2| / 3V0</td><td className="mono">{n('V1', 2)} · {n('V2', 2)} · {n('3V0', 2)} V</td></tr>
+              <tr><td>IN (canal de neutro)</td><td className="mono">{n('IN', 4)} A</td></tr>
+              <tr><td>Z2 (seq. negativa)</td><td className="mono">{n('Z2')} Ω</td></tr>
+              <tr><td>Z0 (seq. zero)</td><td className="mono">{n('Z0')} Ω</td></tr>
+              <tr><td>P0 = Re(3V0·IN*) (wattmétrico)</td><td className="mono">{n('W0')} W</td></tr>
+            </tbody>
+          </table>
+          <p className="hint">
+            Ajustes efetivos (inclui os calculados por EDIR = AUTO/AUTO2):{' '}
+            <span className="mono">{Object.entries(d.settings ?? {}).filter(([k]) => SHOWN_SETTINGS.includes(k)).map(([k, v]) => `${k}=${v}`).join('  ')}</span>
+          </p>
+        </>
+      )}
+    </Section>
   )
 }

@@ -104,6 +104,12 @@ export function TestBench({ sid, info, data }: Props) {
         <h3>Auxiliares do relé</h3>
         <div className="toggles">
           <Toggle checked={sim.halarm} onChange={(v) => patch({ halarm: v })} label="Falha de hardware (HALARM)" />
+          <Toggle
+            checked={sim.lop}
+            onChange={(v) => patch({ lop: v })}
+            label="Perda de potencial (LOP)"
+            hint="Aciona o bit LOP: os elementos direcionais de tensão são desabilitados e, com EFWDLOP = Y, os elementos ajustados para frente (DIRn = F) passam a atuar sem direção."
+          />
           <Toggle checked={sim.linka} onChange={(v) => patch({ linka: v })} label="Link Ethernet A" />
           <Toggle checked={sim.linkb} onChange={(v) => patch({ linkb: v })} label="Link Ethernet B" />
           <Toggle checked={sim.tsntpp} onChange={(v) => patch({ tsntpp: v })} label="SNTP principal" />

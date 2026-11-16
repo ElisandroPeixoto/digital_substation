@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  GRID, KINDS, KIND_ORDER, busCells, flag, hitRect, makeElement, num, worldPorts,
+  GRID, KINDS, KIND_ORDER, busCells, flag, hitRect, makeElement, num, rotate, worldPorts,
   type Diagram, type El, type Kind, type PortRef,
 } from './model'
 import { solve, type ElResult, type Ph } from './solver'
@@ -11,12 +11,25 @@ const DND = 'application/x-systemlab'
 const snap = (v: number) => Math.round(v / GRID) * GRID
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 
-type Sel = { type: 'el' | 'wire'; id: number } | null
+type Pt = [number, number]
+type Sel = { type: 'el'; ids: number[] } | { type: 'wire'; id: number } | null
 type Drag =
   | { mode: 'pan'; sx: number; sy: number; tx: number; ty: number }
-  | { mode: 'move'; id: number; ox: number; oy: number }
+  | { mode: 'move'; id: number; ox: number; oy: number; orig: Map<number, [number, number]>; vias: Map<number, Pt[]> }
+  | { mode: 'seg'; wireId: number; idx: number; path: Pt[]; horiz: boolean }
+  | { mode: 'box'; x0: number; y0: number; base: number[] }
   | { mode: 'wire'; from: PortRef; sx: number; sy: number }
   | null
+interface Box { x0: number; y0: number; x1: number; y1: number }
+
+/** Retângulo do elemento no mundo (área de captura girada): [x0, y0, x1, y1]. */
+function bounds(el: El): [number, number, number, number] {
+  const [x, y, w, h] = hitRect(el)
+  const pts = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].map(([px, py]) => rotate(px, py, el.rot))
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  return [el.x + Math.min(...xs), el.y + Math.min(...ys), el.x + Math.max(...xs), el.y + Math.max(...ys)]
+}
 
 function emptyDiagram(): Diagram {
   return { els: [], wires: [], nextId: 1 }
@@ -67,6 +80,40 @@ function routePoints(a: [number, number], b: [number, number]): [number, number]
   }
   const my = snap((a[1] + b[1]) / 2)
   return [a, [a[0], my], [b[0], my], b]
+}
+
+/** Remove pontos repetidos e intermediários colineares. */
+function simplify(pts: Pt[]): Pt[] {
+  const out: Pt[] = []
+  for (const p of pts) {
+    const last = out[out.length - 1]
+    if (last && last[0] === p[0] && last[1] === p[1]) continue
+    out.push(p)
+    while (out.length >= 3) {
+      const [x, y, z] = out.slice(-3)
+      if ((x[0] === y[0] && y[0] === z[0]) || (x[1] === y[1] && y[1] === z[1])) out.splice(out.length - 2, 1)
+      else break
+    }
+  }
+  return out
+}
+
+/** Trajeto da ligação: automático, ou passando pelos pontos `via` (cotovelos são inseridos se algum extremo se moveu). */
+function wirePath(a: Pt, b: Pt, via?: Pt[]): Pt[] {
+  if (!via || via.length === 0) return routePoints(a, b)
+  const pts: Pt[] = [a, ...via, b]
+  const out: Pt[] = [a]
+  for (let k = 1; k < pts.length; k++) {
+    const p = out[out.length - 1]
+    const q = pts[k]
+    if (p[0] !== q[0] && p[1] !== q[1]) {
+      const prev = out.length >= 2 ? out[out.length - 2] : null
+      const horizPrev = prev ? prev[1] === p[1] : Math.abs(q[0] - p[0]) >= Math.abs(q[1] - p[1])
+      out.push(horizPrev ? [q[0], p[1]] : [p[0], q[1]])
+    }
+    out.push(q)
+  }
+  return simplify(out)
 }
 
 // ------------------------------------------------------------------ formatação
@@ -121,13 +168,17 @@ export function SystemLabApp() {
   const [wiring, setWiring] = useState<PortRef | null>(null)
   const [mouse, setMouse] = useState<[number, number]>([0, 0])
   const [hover, setHover] = useState<number | null>(null)
-  const [dragId, setDragId] = useState<number | null>(null) // elemento sendo arrastado: mostra só o símbolo
+  const [dragIds, setDragIds] = useState<number[]>([]) // elementos sendo arrastados: mostram só o símbolo
+  const [box, setBox] = useState<Box | null>(null)      // retângulo de seleção
   const [showVals, setShowVals] = useState(true)
   const svgRef = useRef<SVGSVGElement>(null)
   const drag = useRef<Drag>(null)
   const viewRef = useRef(view)
   viewRef.current = view
+  const spaceDown = useRef(false)
 
+  const dgRef = useRef(dg)
+  dgRef.current = dg
   const sol = useMemo(() => solve(dg.els, dg.wires), [dg])
   const elById = useMemo(() => new Map(dg.els.map((e) => [e.id, e])), [dg.els])
 
@@ -145,7 +196,7 @@ export function SystemLabApp() {
   const addElement = useCallback((kind: Kind, x: number, y: number) => {
     setDg((d) => {
       const el = makeElement(kind, d.nextId, snap(x), snap(y), d.els)
-      setSel({ type: 'el', id: el.id })
+      setSel({ type: 'el', ids: [el.id] })
       return { ...d, els: [...d.els, el], nextId: d.nextId + 1 }
     })
   }, [])
@@ -165,15 +216,19 @@ export function SystemLabApp() {
 
   const removeSel = useCallback(() => {
     if (!sel) return
-    setDg((d) => sel.type === 'wire'
-      ? { ...d, wires: d.wires.filter((w) => w.id !== sel.id) }
-      : { ...d, els: d.els.filter((e) => e.id !== sel.id), wires: d.wires.filter((w) => w.a[0] !== sel.id && w.b[0] !== sel.id) })
+    setDg((d) => {
+      if (sel.type === 'wire') return { ...d, wires: d.wires.filter((w) => w.id !== sel.id) }
+      const ids = new Set(sel.ids)
+      return { ...d, els: d.els.filter((e) => !ids.has(e.id)), wires: d.wires.filter((w) => !ids.has(w.a[0]) && !ids.has(w.b[0])) }
+    })
     setSel(null)
   }, [sel])
 
   const rotateSel = useCallback(() => {
-    if (sel?.type === 'el') updateEl(sel.id, (e) => ({ ...e, rot: (e.rot + 1) % 4 }))
-  }, [sel, updateEl])
+    if (sel?.type !== 'el') return
+    const ids = new Set(sel.ids)
+    setDg((d) => ({ ...d, els: d.els.map((e) => (ids.has(e.id) ? { ...e, rot: (e.rot + 1) % 4 } : e)) }))
+  }, [sel])
 
   // ---- teclado e roda do mouse
   useEffect(() => {
@@ -181,11 +236,20 @@ export function SystemLabApp() {
       const t = e.target as HTMLElement
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return
       if (e.key === 'Delete' || e.key === 'Backspace') removeSel()
-      else if (e.key === 'r' || e.key === 'R') rotateSel()
+      else if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        setSel({ type: 'el', ids: dgRef.current.els.map((x) => x.id) })
+      } else if (e.key === 'r' || e.key === 'R') rotateSel()
+      else if (e.key === ' ') { e.preventDefault(); spaceDown.current = true }
       else if (e.key === 'Escape') { setWiring(null); setSel(null) }
     }
+    const onKeyUp = (e: KeyboardEvent) => { if (e.key === ' ') spaceDown.current = false }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKeyUp)
+    }
   }, [removeSel, rotateSel])
 
   useEffect(() => {
@@ -207,20 +271,63 @@ export function SystemLabApp() {
   // ---- ponteiro
   const capture = (e: React.PointerEvent) => svgRef.current?.setPointerCapture(e.pointerId)
 
+  const additive = (e: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => e.shiftKey || e.ctrlKey || e.metaKey
+
+  /** Fundo: arrastar com o botão esquerdo desenha o retângulo de seleção; botão do meio/direito (ou Espaço) move a vista. */
   const onBgDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return
     capture(e)
-    drag.current = { mode: 'pan', sx: e.clientX, sy: e.clientY, tx: view.tx, ty: view.ty }
-    setSel(null)
     setWiring(null)
+    if (e.button === 1 || e.button === 2 || spaceDown.current) {
+      drag.current = { mode: 'pan', sx: e.clientX, sy: e.clientY, tx: view.tx, ty: view.ty }
+      return
+    }
+    if (e.button !== 0) return
+    const [wx, wy] = toWorld(e.clientX, e.clientY)
+    const base = additive(e) && sel?.type === 'el' ? sel.ids : []
+    drag.current = { mode: 'box', x0: wx, y0: wy, base }
+    if (!base.length) setSel(null)
   }
+  /** Ligação: seleciona e, ao arrastar, desloca o trecho mais próximo do ponteiro (desenho manual). */
+  const onWireDown = (e: React.PointerEvent, w: Diagram['wires'][number]) => {
+    e.stopPropagation()
+    setSel({ type: 'wire', id: w.id })
+    const a = portPos(w.a)
+    const b = portPos(w.b)
+    if (!a || !b || e.button !== 0) return
+    capture(e)
+    const path = wirePath(a, b, w.via)
+    const [wx, wy] = toWorld(e.clientX, e.clientY)
+    let best = -1
+    let bd = Infinity
+    for (let i = 0; i < path.length - 1; i++) {
+      const [x1, y1] = path[i]
+      const [x2, y2] = path[i + 1]
+      const len2 = (x2 - x1) ** 2 + (y2 - y1) ** 2
+      const t = len2 === 0 ? 0 : clamp(((wx - x1) * (x2 - x1) + (wy - y1) * (y2 - y1)) / len2, 0, 1)
+      const dd = Math.hypot(wx - (x1 + t * (x2 - x1)), wy - (y1 + t * (y2 - y1)))
+      if (dd < bd) { bd = dd; best = i }
+    }
+    if (best >= 0) drag.current = { mode: 'seg', wireId: w.id, idx: best, path, horiz: path[best][1] === path[best + 1][1] }
+  }
+  const resetWire = (id: number) => setDg((d) => ({ ...d, wires: d.wires.map((w) => (w.id === id ? { ...w, via: undefined } : w)) }))
+
   const onElDown = (e: React.PointerEvent, el: El) => {
     if (e.button !== 0) return
     e.stopPropagation()
+    const cur = sel?.type === 'el' ? sel.ids : []
+    if (additive(e)) {                                     // Shift/Ctrl+clique: inclui ou retira da seleção
+      setSel({ type: 'el', ids: cur.includes(el.id) ? cur.filter((i) => i !== el.id) : [...cur, el.id] })
+      return
+    }
     capture(e)
     const [wx, wy] = toWorld(e.clientX, e.clientY)
-    drag.current = { mode: 'move', id: el.id, ox: wx - el.x, oy: wy - el.y }
-    setSel({ type: 'el', id: el.id })
+    const ids = cur.includes(el.id) ? cur : [el.id]       // arrastar um elemento já selecionado move o grupo todo
+    if (!cur.includes(el.id)) setSel({ type: 'el', ids })
+    const orig = new Map<number, [number, number]>()
+    for (const id of ids) { const o = elById.get(id); if (o) orig.set(id, [o.x, o.y]) }
+    const vias = new Map<number, Pt[]>()
+    for (const w of dg.wires) if (w.via?.length && orig.has(w.a[0]) && orig.has(w.b[0])) vias.set(w.id, w.via)
+    drag.current = { mode: 'move', id: el.id, ox: wx - el.x, oy: wy - el.y, orig, vias }
   }
   const onPortDown = (e: React.PointerEvent, ref: PortRef) => {
     if (e.button !== 0) return
@@ -241,20 +348,48 @@ export function SystemLabApp() {
     const d = drag.current
     if (!d) return
     if (d.mode === 'pan') setView((v) => ({ ...v, tx: d.tx + e.clientX - d.sx, ty: d.ty + e.clientY - d.sy }))
-    else if (d.mode === 'move') {
+    else if (d.mode === 'box') {
+      setBox({ x0: d.x0, y0: d.y0, x1: wx, y1: wy })
+      const [ax, bx] = [Math.min(d.x0, wx), Math.max(d.x0, wx)]
+      const [ay, by] = [Math.min(d.y0, wy), Math.max(d.y0, wy)]
+      const hit = dg.els.filter((el) => { const [x0, y0, x1, y1] = bounds(el); return x1 >= ax && x0 <= bx && y1 >= ay && y0 <= by }).map((el) => el.id)
+      const ids = [...new Set([...d.base, ...hit])]
+      setSel(ids.length ? { type: 'el', ids } : null)
+    } else if (d.mode === 'move') {
       const x = snap(wx - d.ox)
       const y = snap(wy - d.oy)
       const cur = elById.get(d.id)
-      if (cur && (cur.x !== x || cur.y !== y)) {
-        setDragId(d.id)
-        updateEl(d.id, (el) => ({ ...el, x, y }))
+      const anchor = d.orig.get(d.id)
+      if (cur && anchor && (cur.x !== x || cur.y !== y)) {
+        const dx = x - anchor[0]
+        const dy = y - anchor[1]
+        setDragIds([...d.orig.keys()])
+        setDg((g) => ({
+          ...g,
+          els: g.els.map((el) => { const o = d.orig.get(el.id); return o ? { ...el, x: o[0] + dx, y: o[1] + dy } : el }),
+          wires: d.vias.size ? g.wires.map((w) => { const v = d.vias.get(w.id); return v ? { ...w, via: v.map(([px, py]) => [px + dx, py + dy] as Pt) } : w }) : g.wires,
+        }))
       }
+    } else if (d.mode === 'seg') {
+      // arrastar um trecho da ligação: ele se desloca na perpendicular; nos trechos presos aos terminais surge um cotovelo
+      const k = d.horiz ? 1 : 0
+      const v = snap(d.horiz ? wy : wx)
+      if (v === d.path[d.idx][k] && !dgRef.current.wires.find((w) => w.id === d.wireId)?.via) return
+      const pts = d.path.map((p) => [...p] as Pt)
+      let idx = d.idx
+      if (idx === 0) { pts.splice(1, 0, [...pts[0]] as Pt); idx = 1 }
+      if (idx + 1 === pts.length - 1) pts.splice(pts.length - 1, 0, [...pts[pts.length - 1]] as Pt)
+      pts[idx][k] = v
+      pts[idx + 1][k] = v
+      const via = simplify(pts).slice(1, -1)
+      setDg((g) => ({ ...g, wires: g.wires.map((w) => (w.id === d.wireId ? { ...w, via } : w)) }))
     }
   }
   const onUp = (e: React.PointerEvent) => {
     const d = drag.current
     drag.current = null
-    setDragId(null)
+    setDragIds([])
+    setBox(null)
     svgRef.current?.releasePointerCapture?.(e.pointerId)
     if (d?.mode !== 'wire') return
     const t = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest('[data-port]')
@@ -282,7 +417,7 @@ export function SystemLabApp() {
       const a = portPos(w.a)
       const b = portPos(w.b)
       if (!a || !b) continue
-      const pts = routePoints(a, b)
+      const pts = wirePath(a, b, w.via)
       for (let i = 0; i < pts.length - 1; i++) {
         const [x1, y1] = pts[i]
         const [x2, y2] = pts[i + 1]
@@ -313,7 +448,7 @@ export function SystemLabApp() {
         nextId: id + 3,
       }
     })
-    setSel({ type: 'el', id: dg.nextId })
+    setSel({ type: 'el', ids: [dg.nextId] })
     return true
   }
   /** Arraste a partir da toolbox: a imagem arrastada é só o símbolo (sem borda nem nome), na escala atual do diagrama. */
@@ -342,10 +477,12 @@ export function SystemLabApp() {
     const e = elById.get(ref[0])
     return e ? worldPorts(e)[ref[1]] ?? null : null
   }
-  const route = (a: [number, number], b: [number, number]) =>
-    routePoints(a, b).map(([x, y], i) => `${i ? 'L' : 'M'} ${x} ${y}`).join(' ')
+  const pathD = (pts: Pt[]) => pts.map(([x, y], i) => `${i ? 'L' : 'M'} ${x} ${y}`).join(' ')
+  const route = (a: [number, number], b: [number, number]) => pathD(routePoints(a, b))
 
-  const selEl = sel?.type === 'el' ? elById.get(sel.id) : undefined
+  const selIds = useMemo(() => new Set(sel?.type === 'el' ? sel.ids : []), [sel])
+  const selEl = sel?.type === 'el' && sel.ids.length === 1 ? elById.get(sel.ids[0]) : undefined
+  const multi = sel?.type === 'el' && sel.ids.length > 1
   const selRes = selEl ? sol.res.get(selEl.id) : undefined
   const fitView = () => setView({ tx: 40, ty: 40, k: 1 })
   const clearAll = () => {
@@ -353,6 +490,7 @@ export function SystemLabApp() {
   }
 
   const wiringPos = wiring ? portPos(wiring) : null
+  const setHide = (hide: boolean) => setDg((d) => ({ ...d, els: d.els.map((e) => (selIds.has(e.id) ? { ...e, hide } : e)) }))
 
   return (
     <div className="sl">
@@ -378,7 +516,8 @@ export function SystemLabApp() {
         ))}
         <p className="hint">
           Arraste um elemento para a área central. Para ligar, clique em um terminal (●) e depois em outro, ou arraste de um até o outro.
-          Duplo clique em disjuntor/chave abre ou fecha. <b>R</b> gira, <b>Delete</b> remove, a roda do mouse dá zoom e arrastar o fundo move a vista.
+          Duplo clique em disjuntor/chave abre ou fecha. Arraste no fundo para <b>selecionar vários</b> (Shift/Ctrl+clique soma ou retira; Ctrl+A seleciona tudo) e arraste um deles para mover o grupo.
+          <b>R</b> gira, <b>Delete</b> remove, a roda do mouse dá zoom e a vista se move com o botão do meio/direito (ou Espaço + arrastar).
         </p>
       </aside>
 
@@ -398,6 +537,7 @@ export function SystemLabApp() {
           onPointerDown={onBgDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
+          onContextMenu={(e) => e.preventDefault()}
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
           onDrop={onDrop}
         >
@@ -415,15 +555,21 @@ export function SystemLabApp() {
               const b = portPos(w.b)
               if (!a || !b) return null
               const on = sol.nodeEnergized.get(`${w.a[0]}:${w.a[1]}`)
-              const d = route(a, b)
+              const path = wirePath(a, b, w.via)
+              const d = pathD(path)
               const selected = sel?.type === 'wire' && sel.id === w.id
               return (
                 <g key={w.id}>
                   <path d={d} fill="none" stroke={selected ? 'var(--accent-2)' : on ? 'var(--accent)' : 'var(--muted)'} strokeWidth={selected ? 3 : 2} strokeLinejoin="round" />
                   <path
-                    d={d} fill="none" stroke="transparent" strokeWidth={12} style={{ cursor: 'pointer' }}
-                    onPointerDown={(e) => { e.stopPropagation(); setSel({ type: 'wire', id: w.id }) }}
+                    d={d} fill="none" stroke="transparent" strokeWidth={12} style={{ cursor: 'grab' }}
+                    onPointerDown={(e) => onWireDown(e, w)}
+                    onDoubleClick={() => resetWire(w.id)}
                   />
+                  {selected && path.slice(0, -1).map(([x1, y1], i) => (
+                    <rect key={i} x={(x1 + path[i + 1][0]) / 2 - 4} y={(y1 + path[i + 1][1]) / 2 - 4} width={8} height={8} rx={2}
+                      fill="var(--accent-2)" stroke="var(--panel)" pointerEvents="none" />
+                  ))}
                 </g>
               )
             })}
@@ -433,8 +579,8 @@ export function SystemLabApp() {
               const r = sol.res.get(el.id)
               const on = el.kind === 'source' || !!r?.energized
               const color = on ? 'var(--accent)' : 'var(--muted)'
-              const dragging = dragId === el.id
-              const selected = sel?.type === 'el' && sel.id === el.id && !dragging
+              const dragging = dragIds.includes(el.id)
+              const selected = selIds.has(el.id) && !dragging
               const [hx, hy, hw, hh] = hitRect(el)
               const ports = worldPorts(el)
               const showPorts = !dragging && (el.kind !== 'bus' || wiring != null || selected || hover === el.id)
@@ -442,7 +588,8 @@ export function SystemLabApp() {
               const lab: [number, number] = el.kind === 'bus'
                 ? (vertBus ? [el.x + 16, el.y - busCells(el) * 10 - 6] : [el.x, el.y + 26])
                 : [el.x, el.y + (el.kind === 'tp' ? 40 : 40)]
-              const lines = showVals && !dragging ? valueLines(el, r) : []
+              const hidden = !!el.hide
+              const lines = showVals && !dragging && !hidden ? valueLines(el, r) : []
               return (
                 <g key={el.id} onMouseEnter={() => setHover(el.id)} onMouseLeave={() => setHover((h) => (h === el.id ? null : h))}>
                   <g
@@ -454,7 +601,7 @@ export function SystemLabApp() {
                     <rect x={hx} y={hy} width={hw} height={hh} fill="transparent" stroke={selected ? 'var(--accent-2)' : 'none'} strokeDasharray="4 3" rx={4} />
                     <ElementSymbol el={el} color={color} />
                   </g>
-                  {!dragging && <text x={lab[0]} y={lab[1]} textAnchor={vertBus ? 'start' : 'middle'} className="sl-name" fill="var(--ink)" pointerEvents="none">{el.name}</text>}
+                  {!dragging && !hidden && <text x={lab[0]} y={lab[1]} textAnchor={vertBus ? 'start' : 'middle'} className="sl-name" fill="var(--ink)" pointerEvents="none">{el.name}</text>}
                   {lines.map((t, i) => (
                     <text key={i} x={lab[0]} y={lab[1] + 12 * (i + 1)} textAnchor={vertBus ? 'start' : 'middle'} className="sl-val" fill={on ? 'var(--accent-2)' : 'var(--muted)'} pointerEvents="none">{t}</text>
                   ))}
@@ -467,6 +614,12 @@ export function SystemLabApp() {
                 </g>
               )
             })}
+
+            {/* retângulo de seleção */}
+            {box && (
+              <rect x={Math.min(box.x0, box.x1)} y={Math.min(box.y0, box.y1)} width={Math.abs(box.x1 - box.x0)} height={Math.abs(box.y1 - box.y0)}
+                fill="var(--accent)" fillOpacity={0.12} stroke="var(--accent)" strokeDasharray="4 3" pointerEvents="none" />
+            )}
 
             {/* ligação em andamento */}
             {wiringPos && <path d={route(wiringPos, [snap(mouse[0]), snap(mouse[1])])} fill="none" stroke="var(--accent-2)" strokeWidth={2} strokeDasharray="5 4" pointerEvents="none" />}
@@ -494,11 +647,29 @@ export function SystemLabApp() {
                 )}
               </label>
             ))}
+            <label className="sl-field">
+              <span>Ocultar nome e dados no diagrama</span>
+              <input type="checkbox" checked={!!selEl.hide} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, hide: e.target.checked }))} />
+            </label>
             <div className="row">
               <button onClick={rotateSel}>↻ Girar (R)</button>
               <button className="danger" onClick={removeSel}>Excluir</button>
             </div>
             <Results el={selEl} r={selRes} />
+          </>
+        ) : multi ? (
+          <>
+            <h3>{selIds.size} elementos selecionados</h3>
+            <p className="muted">{dg.els.filter((x) => selIds.has(x.id)).map((x) => x.name).join(', ')}</p>
+            <p className="hint">Arraste um deles para mover o grupo. As ligações entre os selecionados acompanham.</p>
+            <div className="row wrap">
+              <button onClick={() => setHide(true)}>Ocultar nomes e dados</button>
+              <button onClick={() => setHide(false)}>Mostrar nomes e dados</button>
+            </div>
+            <div className="row">
+              <button onClick={rotateSel}>↻ Girar cada um (R)</button>
+              <button className="danger" onClick={removeSel}>Excluir {selIds.size}</button>
+            </div>
           </>
         ) : sel?.type === 'wire' ? (
           <>
@@ -507,10 +678,14 @@ export function SystemLabApp() {
               const w = dg.wires.find((x) => x.id === sel.id)
               return w ? `${elById.get(w.a[0])?.name} ↔ ${elById.get(w.b[0])?.name}` : ''
             })()}</p>
-            <button className="danger" onClick={removeSel}>Excluir ligação</button>
+            <p className="hint">Arraste um trecho da ligação (marcado por quadradinhos) para reorganizar o desenho. Duplo clique volta ao trajeto automático.</p>
+            <div className="row">
+              {dg.wires.find((x) => x.id === sel.id)?.via?.length ? <button onClick={() => resetWire(sel.id)}>Trajeto automático</button> : null}
+              <button className="danger" onClick={removeSel}>Excluir ligação</button>
+            </div>
           </>
         ) : (
-          <Summary dg={dg} sol={sol} onSelect={(id) => setSel({ type: 'el', id })} />
+          <Summary dg={dg} sol={sol} onSelect={(id) => setSel({ type: 'el', ids: [id] })} />
         )}
       </aside>
     </div>

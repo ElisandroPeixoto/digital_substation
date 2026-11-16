@@ -12,6 +12,8 @@ export interface El {
   rot: number
   name: string
   p: Params
+  /** Oculta o nome e os dados do elemento na tela de edição. */
+  hide?: boolean
 }
 
 /** Conexão entre dois terminais: [id do elemento, índice do terminal]. */
@@ -20,6 +22,8 @@ export interface Wire {
   id: number
   a: PortRef
   b: PortRef
+  /** Pontos intermediários do trajeto (desenho manual da ligação); vazio = trajeto automático. */
+  via?: [number, number][]
 }
 
 export interface Diagram {
