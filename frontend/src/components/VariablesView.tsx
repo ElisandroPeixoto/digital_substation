@@ -5,9 +5,36 @@ import type { DirectionalInfo, StateData } from '../types'
 import { useStamp } from '../prefs'
 import { Bar, Empty, Pill, Section } from './ui'
 
+/** Controle de forçamento de uma variável lógica: 0/1 (ou valor numérico) ou liberar. */
+function ForceCtl({ sid, name, forced, numeric }: { sid: string; name: string; forced: Record<string, number>; numeric?: boolean }) {
+  const [txt, setTxt] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const go = (v: number | null) => api.force(sid, name, v).then(() => setErr(null)).catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+  if (name in forced) {
+    return <button className="danger force-btn" onClick={() => go(null)} title={`${name} forçado em ${forced[name]}. Clique para liberar`}>FORÇADO = {forced[name]} ✕</button>
+  }
+  return (
+    <span className="force-ctl" title={err ?? `Forçar ${name}`}>
+      {numeric ? (
+        <>
+          <input className="numinput force-num" value={txt} onChange={(e) => setTxt(e.target.value)} placeholder="valor" aria-label={`Valor para forçar ${name}`} />
+          <button className="force-btn" disabled={txt.trim() === '' || Number.isNaN(Number(txt))} onClick={() => go(Number(txt))}>Forçar</button>
+        </>
+      ) : (
+        <>
+          <button className="force-btn" onClick={() => go(0)}>0</button>
+          <button className="force-btn" onClick={() => go(1)}>1</button>
+        </>
+      )}
+      {err && <span className="err-text">!</span>}
+    </span>
+  )
+}
+
 const REC_LABEL: Record<string, string> = { RS: 'Repouso (79RS)', CY: 'Em ciclo (79CY)', LO: 'Bloqueio (79LO)' }
 
-export function VariablesView({ sid }: { sid: string }) {
+export function VariablesView({ sid, model }: { sid: string; model?: string }) {
+  const is2440 = model === '2440'
   const { data, error } = usePoll(() => api.state(sid), 400, true, sid)
   const [q, setQ] = useState('')
   const ts = useStamp()
@@ -25,6 +52,8 @@ export function VariablesView({ sid }: { sid: string }) {
   const analog = Object.entries(s.analog).filter(([n]) => match(n))
   const rc = s.recloser
   const tc = s.trip_close
+  const forced = s.forced ?? {}
+  const fnames = Object.keys(forced)
 
   return (
     <div className="vars">
@@ -34,21 +63,29 @@ export function VariablesView({ sid }: { sid: string }) {
         <span className="muted">Tempo simulado: {ts.simTime(s.time)}</span>
       </div>
 
+      <section className="card force-card">
+        <h3>Forçar variável lógica {fnames.length > 0 && <span className="tag">{fnames.length} forçada(s)</span>}</h3>
+        <p className="hint">Mantém o valor da variável (SV, SVT, LT, SCnn/SCnnQ, MV, OUT…) fixo, ignorando a lógica, até ser liberada. Também há botões "Forçar" nas tabelas abaixo.</p>
+        <ForceAny sid={sid} forced={forced} />
+      </section>
+
       {s.unresolved.length > 0 && (
         <div className="alert">
           A lógica referencia {s.unresolved.length} bit(s) que o simulador não conhece (valem 0): {s.unresolved.join(', ')}
         </div>
       )}
 
-      <div className="summary-cards">
+      {!is2440 && <div className="summary-cards">
         <div className="mini"><span>Grupo ativo</span><b>{s.group}{s.pending_group ? ` → ${s.pending_group}` : ''}</b></div>
         <div className="mini"><span>TRIP</span><Pill on={tc.TRIP as number} /></div>
         <div className="mini"><span>CLOSE</span><Pill on={tc.CLOSE as number} /></div>
         <div className="mini"><span>52A</span><Pill on={tc['52A'] as number} onLabel="FECHADO" offLabel="ABERTO" /></div>
         <div className="mini"><span>Religamento</span><b>{rc.enabled ? REC_LABEL[rc.state] : 'desabilitado'}</b></div>
         <div className="mini"><span>Tentativa</span><b>{rc.shot} / {rc.max_shots}</b></div>
-      </div>
+      </div>}
 
+      {!is2440 && (
+        <>
       <Section title="Disparo e fechamento" open={!q}>
         <table className="tbl">
           <tbody>
@@ -114,6 +151,9 @@ export function VariablesView({ sid }: { sid: string }) {
         )}
       </Section>
 
+        </>
+      )}
+
       <Section title="Entradas digitais" count={inputs.length}>
         <table className="tbl">
           <thead><tr><th>Entrada</th><th>Descrição</th><th>Físico</th><th>Filtrado</th><th>Debounce</th></tr></thead>
@@ -133,12 +173,13 @@ export function VariablesView({ sid }: { sid: string }) {
 
       <Section title="Saídas digitais" count={outputs.length}>
         <table className="tbl">
-          <thead><tr><th>Saída</th><th>Estado</th><th>Equação</th><th>Descrição</th></tr></thead>
+          <thead><tr><th>Saída</th><th>Estado</th><th>Forçar</th><th>Equação</th><th>Descrição</th></tr></thead>
           <tbody>
             {outputs.map((o) => (
               <tr key={o.name} className={o.value ? 'hl' : ''}>
                 <td className="mono">{o.name}</td>
                 <td><Pill on={o.value} /></td>
+                <td><ForceCtl sid={sid} name={o.name} forced={forced} /></td>
                 <td className="mono wrap">{o.expr}</td>
                 <td>{o.comment}{o.role ? <span className="tag">{`bobina de ${o.role}`}</span> : null}</td>
               </tr>
@@ -149,12 +190,13 @@ export function VariablesView({ sid }: { sid: string }) {
 
       <Section title="Latches (LT)" count={latches.length}>
         <table className="tbl">
-          <thead><tr><th>Latch</th><th>Estado</th><th>Função</th><th>SET</th><th></th><th>RESET</th><th></th></tr></thead>
+          <thead><tr><th>Latch</th><th>Estado</th><th>Forçar</th><th>Função</th><th>SET</th><th></th><th>RESET</th><th></th></tr></thead>
           <tbody>
             {latches.map((l) => (
               <tr key={l.name} className={l.value ? 'hl' : ''}>
                 <td className="mono">{l.name}</td>
                 <td><Pill on={l.value} /></td>
+                <td><ForceCtl sid={sid} name={l.name} forced={forced} /></td>
                 <td>{l.set_comment}</td>
                 <td className="mono wrap">{l.set_expr}</td>
                 <td><Pill on={l.set_now} /></td>
@@ -168,13 +210,15 @@ export function VariablesView({ sid }: { sid: string }) {
 
       <Section title="Variáveis SELogic temporizadas (SV)" count={timers.length}>
         <table className="tbl">
-          <thead><tr><th>Var.</th><th>Entrada</th><th>Saída (T)</th><th>PU / DO</th><th>Contagem</th><th>Equação</th><th>Descrição</th></tr></thead>
+          <thead><tr><th>Var.</th><th>Entrada</th><th>Forçar entrada</th><th>Saída (T)</th><th>Forçar saída (T)</th><th>PU / DO</th><th>Contagem</th><th>Equação</th><th>Descrição</th></tr></thead>
           <tbody>
             {timers.map((t) => (
               <tr key={t.name} className={t.out ? 'hl' : ''}>
                 <td className="mono">{t.name}</td>
                 <td><Pill on={t.input} /></td>
+                <td><ForceCtl sid={sid} name={t.name} forced={forced} /></td>
                 <td><Pill on={t.out} /></td>
+                <td><ForceCtl sid={sid} name={`${t.name}T`} forced={forced} /></td>
                 <td className="mono">{t.pu} / {t.do} s</td>
                 <td className="mono">{t.input && !t.out ? `PU ${fmt(t.pu_el, 2)}` : !t.input && t.out ? `DO ${fmt(t.do_el, 2)}` : '–'}</td>
                 <td className="mono wrap">{t.expr}</td>
@@ -187,12 +231,13 @@ export function VariablesView({ sid }: { sid: string }) {
 
       <Section title="Contadores e variáveis matemáticas" count={s.counters.length + s.math.length}>
         <table className="tbl">
-          <thead><tr><th>Nome</th><th>Valor</th><th>Equação</th><th>Descrição</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Valor</th><th>Forçar</th><th>Equação</th><th>Descrição</th></tr></thead>
           <tbody>
             {s.counters.map((c) => (
               <tr key={c.name}>
                 <td className="mono">{c.name}</td>
                 <td className="mono">{c.value} / {c.preset} <Pill on={c.q} onLabel="Q" offLabel="Q" /></td>
+                <td><ForceCtl sid={sid} name={c.name} forced={forced} numeric /> <ForceCtl sid={sid} name={`${c.name}Q`} forced={forced} /> <small className="muted">Q</small></td>
                 <td className="mono wrap">CU: {c.cu}</td>
                 <td>{c.comment}</td>
               </tr>
@@ -201,6 +246,7 @@ export function VariablesView({ sid }: { sid: string }) {
               <tr key={m.name}>
                 <td className="mono">{m.name}</td>
                 <td className="mono">{fmt(m.value, 3)}</td>
+                <td><ForceCtl sid={sid} name={m.name} forced={forced} numeric /></td>
                 <td className="mono wrap">{m.expr}</td>
                 <td>{m.comment}</td>
               </tr>
@@ -209,13 +255,13 @@ export function VariablesView({ sid }: { sid: string }) {
         </table>
       </Section>
 
-      <Section title="Grandezas analógicas" count={analog.length} open={false}>
+      {!is2440 && <Section title="Grandezas analógicas" count={analog.length} open={false}>
         <div className="chips">
           {analog.map(([n, v]) => (
             <span key={n} className="chip"><b>{n}</b> {fmt(v, 3)}</span>
           ))}
         </div>
-      </Section>
+      </Section>}
 
       <Section title="Relay Word (todos os bits)" count={words.length} open={false}>
         <div className="chips">
@@ -295,5 +341,30 @@ function DirectionalSection({ d }: { d: DirectionalInfo }) {
         </>
       )}
     </Section>
+  )
+}
+
+function ForceAny({ sid, forced }: { sid: string; forced: Record<string, number> }) {
+  const [name, setName] = useState('')
+  const [val, setVal] = useState('1')
+  const [err, setErr] = useState<string | null>(null)
+  const apply = () => api.force(sid, name, Number(val)).then(() => setErr(null)).catch((e) => setErr(e instanceof Error ? e.message : String(e)))
+  const names = Object.keys(forced)
+  return (
+    <>
+      <div className="toolbar">
+        <input className="search" placeholder="Nome (ex.: LT04, SV03T, SC01Q, OUT101)" value={name} onChange={(e) => setName(e.target.value.toUpperCase())} />
+        <select value={val} onChange={(e) => setVal(e.target.value)}><option value="1">1 (ligado)</option><option value="0">0 (desligado)</option></select>
+        <input className="numinput force-num" value={val} onChange={(e) => setVal(e.target.value)} aria-label="Valor" />
+        <button className="primary" disabled={!name || Number.isNaN(Number(val))} onClick={apply}>Forçar</button>
+        {names.length > 0 && <button onClick={() => api.clearForces(sid)}>Liberar todas</button>}
+      </div>
+      {err && <p className="err-text">{err}</p>}
+      {names.length > 0 && (
+        <div className="chips">
+          {names.map((n) => <button key={n} className="chip on force-chip" onClick={() => api.force(sid, n, null)} title="Clique para liberar">{n} = {forced[n]} ✕</button>)}
+        </div>
+      )}
+    </>
   )
 }

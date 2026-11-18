@@ -1,5 +1,9 @@
 import type {
   DnpData,
+  MbStatus,
+  IecProject,
+  IecStatus,
+  SessionBrief,
   DnpResult,
   PanelData,
   SerEvent,
@@ -70,6 +74,7 @@ export const api = {
     return buttonChain
   },
   forceBreaker: (sid: string, closed: boolean) => req('POST', `/sessions/${sid}/breaker`, { closed }),
+  bit: (sid: string, name: string, mode: 'set' | 'clear' | 'toggle' | 'pulse' | 'watch') => req('POST', `/sessions/${sid}/bits`, { name, mode }),
   setInput: (sid: string, name: string, value: boolean) => req('POST', `/sessions/${sid}/inputs`, { name, value }),
   sim: (sid: string, patch: Partial<SimConfig>) => req<SimConfig>('POST', `/sessions/${sid}/sim`, { patch }),
   fault: (sid: string, type: string, current?: number, persistent?: boolean) =>
@@ -87,4 +92,40 @@ export const api = {
   settingsRaw: (sid: string, cls: string) => req<string>('GET', `/sessions/${sid}/settings/${cls}/raw`),
   patchSetting: (sid: string, cls: string, key: string, value: string) =>
     req<unknown>('PATCH', `/sessions/${sid}/settings`, { cls, key, value }),
+
+  force: (sid: string, name: string, value: number | null) => req<{ forced: Record<string, number> }>('POST', `/sessions/${sid}/force`, { name, value }),
+  clearForces: (sid: string) => req<unknown>('DELETE', `/sessions/${sid}/force`),
+
+  // Mirrored Bits
+  mbStatus: () => req<MbStatus>('GET', '/mbits'),
+  mbAddLink: (a: { sid: string; port: number }, b: { sid: string; port: number }) => req<{ id: string }>('POST', '/mbits/links', { a, b }),
+  mbPatchLink: (id: string, body: { cut?: boolean; loss_pct?: number }) => req<unknown>('PATCH', `/mbits/links/${id}`, body),
+  mbDeleteLink: (id: string) => req<unknown>('DELETE', `/mbits/links/${id}`),
+  mbClear: () => req<unknown>('POST', '/mbits/clear'),
+
+  sessions: () => req<SessionBrief[]>('GET', '/sessions'),
+
+  // IEC 61850
+  async iecUpload(file: File): Promise<IecProject> {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(BASE + '/iec61850/files', { method: 'POST', body: form })
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(j.detail ?? res.statusText)
+    }
+    return res.json()
+  },
+  iecProject: () => req<IecProject>('GET', '/iec61850'),
+  iecStatus: () => req<IecStatus>('GET', '/iec61850/status'),
+  iecClear: () => req<unknown>('DELETE', '/iec61850'),
+  iecRemove: (name: string) => req<unknown>('DELETE', `/iec61850/ieds/${encodeURIComponent(name)}`),
+  iecEditGcb: (ied: string, cb: string, fields: Record<string, unknown>) => req<IecProject>('POST', '/iec61850/gcb', { ied, cb, fields }),
+  iecEditSub: (ied: string, pub: string, cb: string, fields: Record<string, unknown>, vbs?: Record<string, string>) =>
+    req<IecProject>('POST', '/iec61850/sub', { ied, pub, cb, fields, vbs }),
+  iecReset: (ied?: string) => req<IecProject>('POST', '/iec61850/reset', { ied: ied ?? null }),
+  iecBind: (sid: string, ied: string | null) => req<unknown>('POST', '/iec61850/bind', { sid, ied }),
+  iecTopology: (networks: { id: string; name: string; sids: string[] }[] | null) => req<unknown>('POST', '/iec61850/topology', { networks }),
+  iecNetwork: (body: { vlan_aware?: boolean; latency_ms?: number; loss_pct?: number; status_on_loss?: boolean; cut?: string[] }) =>
+    req<unknown>('POST', '/iec61850/network', body),
 }

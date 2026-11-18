@@ -8,13 +8,16 @@ que abriga vários aplicativos, que podem ou não interagir entre si. A tela ini
 |---|---|---|
 | **DigitalRelay** | Simulador de relés SEL-751 (descrito abaixo) | `#/digitalrelay` |
 | **PhaseEngine** | Diagrama fasorial de tensões/correntes, potências e componentes de sequência (ver seção abaixo) | `#/phaseengine` |
+| **Overcurrent** | Coordenograma de sobrecorrente: curvas 51 de fase/neutro e proteção 50, com tempos ao passar o mouse (ver [docs/overcurrent.md](docs/overcurrent.md)) | `#/overcurrent` |
+| **IEC61850** | Lê `.scd`/`.cid` (blocos GOOSE, publicadores, assinantes, bits virtuais SEL) e simula GOOSE entre relés do DigitalRelay (ver [docs/iec61850.md](docs/iec61850.md)) | `#/iec61850` |
+| **MBitConfig** | Links Mirrored Bits entre relés: TMB de um chega no RMB do outro (portas 2/3 em MB8A/MB8B) (ver [docs/mbitconfig.md](docs/mbitconfig.md)) | `#/mbitconfig` |
 | **SystemLab** | Editor de diagrama unifilar com simulação de tensão, corrente e potência (ver seção abaixo) | `#/systemlab` |
 
 Para acrescentar um novo aplicativo: registre-o em `frontend/src/eclipse/apps.ts` e crie a rota em `App.tsx`.
 
 ---
 
-# DigitalRelay – simulador SEL-751 (MVP)
+# DigitalRelay – simulador SEL-751 e SEL-2440 (MVP)
 
 Ferramenta web que **abre um arquivo `.rdb` do AcSELerator QuickSet**, decompõe os arquivos de texto de ajuste
 que existem dentro dele e **simula o relé SEL-751** com o ajuste escolhido:
@@ -23,6 +26,7 @@ que existem dentro dele e **simula o relé SEL-751** com o ajuste escolhido:
    esquerda, com o texto central editável), TARGET RESET e teclas de navegação, funcionando conforme a lógica ajustada.
    Ao lado, a **tela inicial da simulação** mostra a medição (correntes, tensões, frequência, P/Q/S), as entradas
    digitais (inclusive a IN101/52A) e as saídas digitais.
+   O mesmo aplicativo simula o **SEL-2440** (DPAC: lógica SELogic e E/S digitais, sem proteção) com a réplica do frontal e painéis de E/S e bits VB/RB/CB (ver `docs/digitalrelay.md`).
 2. **Variáveis internas** – entradas e saídas digitais, latches, variáveis SELogic temporizadas, contadores,
    elementos de proteção, religamento (79) e todos os bits do Relay Word, em tempo real.
 3. **DNP3** – estado de cada ponto do mapa (BO / BI / AI), eventos (SOE) e **envio de comandos** (Select / Operate /

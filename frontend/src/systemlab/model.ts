@@ -1,6 +1,6 @@
 /** Modelo do diagrama unifilar do SystemLab (elementos, conexões, geometria dos terminais). */
 
-export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc'
+export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc' | 'ied' | 'network' | 'battery' | 'inverter'
 export type Params = Record<string, number | boolean>
 
 export interface El {
@@ -14,7 +14,21 @@ export interface El {
   p: Params
   /** Oculta o nome e os dados do elemento na tela de edição. */
   hide?: boolean
+  /** IED: sessão do DigitalRelay associada (id) e rótulo do relé. */
+  sid?: string
+  rname?: string
+  /** IED: elementos do diagrama monitorados/alimentando o relé (ids): disjuntor, TC (correntes) e TP (tensões). */
+  links?: { breaker?: number; tc?: number; tp?: number }
 }
+
+/** Elementos de comunicação (não participam do cálculo elétrico). */
+export const isComm = (k: Kind): boolean => k === 'ied' || k === 'network'
+/** Elementos desenhados como barra com terminais a cada célula. */
+export const isBar = (k: Kind): boolean => k === 'bus'
+
+/** Terminais da Rede: extremidades dos 8 raios (raio de 38 px). */
+export const NET_PORTS = 8
+export const NET_R = 38
 
 /** Conexão entre dois terminais: [id do elemento, índice do terminal]. */
 export type PortRef = [number, number]
@@ -64,14 +78,20 @@ export const KINDS: Record<Kind, KindInfo> = {
   breaker: {
     label: 'Disjuntor',
     prefix: 'DJ',
-    defaults: { closed: true },
-    fields: [{ key: 'closed', label: 'Fechado', type: 'bool' }],
+    defaults: { closed: true, dc: false },
+    fields: [
+      { key: 'closed', label: 'Fechado', type: 'bool' },
+      { key: 'dc', label: 'Circuito CC (desmarcado = CA)', type: 'bool' },
+    ],
   },
   switch: {
     label: 'Chave seccionadora',
     prefix: 'SC',
-    defaults: { closed: true },
-    fields: [{ key: 'closed', label: 'Fechada', type: 'bool' }],
+    defaults: { closed: true, dc: false },
+    fields: [
+      { key: 'closed', label: 'Fechada', type: 'bool' },
+      { key: 'dc', label: 'Circuito CC (desmarcado = CA)', type: 'bool' },
+    ],
   },
   transformer: {
     label: 'Transformador',
@@ -89,7 +109,7 @@ export const KINDS: Record<Kind, KindInfo> = {
     label: 'Barramento',
     prefix: 'BA',
     defaults: { cells: 8 },
-    fields: [{ key: 'cells', label: 'Comprimento (células de 20 px, par)', type: 'number', min: 2 }],
+    fields: [{ key: 'cells', label: 'Comprimento (células de 20 px, par, até 200)', type: 'number', min: 2 }],
   },
   load: {
     label: 'Carga',
@@ -110,6 +130,43 @@ export const KINDS: Record<Kind, KindInfo> = {
       { key: 'vs', label: 'Secundário (fase-fase)', unit: 'V', type: 'number', min: 0 },
     ],
   },
+  battery: {
+    label: 'Bateria',
+    prefix: 'BT',
+    defaults: { vdc: 1000, cap: 2000, soc: 80, socmin: 10, socmax: 100 },
+    fields: [
+      { key: 'vdc', label: 'Tensão CC nominal', unit: 'V', type: 'number', min: 1 },
+      { key: 'cap', label: 'Capacidade', unit: 'kWh', type: 'number', min: 0 },
+      { key: 'soc', label: 'Estado de carga (SOC)', unit: '%', type: 'number', min: 0 },
+      { key: 'socmin', label: 'SOC mínimo', unit: '%', type: 'number', min: 0 },
+      { key: 'socmax', label: 'SOC máximo', unit: '%', type: 'number', min: 0 },
+    ],
+  },
+  inverter: {
+    label: 'Inversor',
+    prefix: 'INV',
+    defaults: { sn: 2, p: 1, q: 0, eff: 98, vac: 0.48, on: true },
+    fields: [
+      { key: 'on', label: 'Habilitado', type: 'bool' },
+      { key: 'sn', label: 'Potência nominal', unit: 'MVA', type: 'number', min: 0 },
+      { key: 'p', label: 'P (+ descarrega / − carrega)', unit: 'MW', type: 'number' },
+      { key: 'q', label: 'Q (+ injeta reativo)', unit: 'Mvar', type: 'number' },
+      { key: 'eff', label: 'Rendimento', unit: '%', type: 'number', min: 1 },
+      { key: 'vac', label: 'Tensão CA nominal (fase-fase; usada ao formar rede ilhada)', unit: 'kV', type: 'number', min: 0.001 },
+    ],
+  },
+  ied: {
+    label: 'IED',
+    prefix: 'IED',
+    defaults: {},
+    fields: [],
+  },
+  network: {
+    label: 'Rede',
+    prefix: 'RD',
+    defaults: {},
+    fields: [],
+  },
   tc: {
     label: 'TC',
     prefix: 'TC',
@@ -121,7 +178,7 @@ export const KINDS: Record<Kind, KindInfo> = {
   },
 }
 
-export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'load', 'tp', 'tc']
+export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'load', 'battery', 'inverter', 'tp', 'tc', 'ied', 'network']
 
 export function num(el: El, key: string): number {
   const v = el.p[key]
@@ -135,6 +192,10 @@ export function localPorts(el: El): [number, number][] {
     case 'source': return [[40, 0]]
     case 'load': return [[-40, 0]]
     case 'tp': return [[0, -40]]
+    case 'ied': return [[0, 30]]
+    case 'battery': return [[40, 0]]              // terminal CC
+    case 'inverter': return [[-40, 0], [40, 0]]   // 0 = CC (bateria), 1 = CA (rede)
+    case 'network': return Array.from({ length: NET_PORTS }, (_, k) => [Math.round(NET_R * Math.cos((k * Math.PI) / 4) * 100) / 100, Math.round(NET_R * Math.sin((k * Math.PI) / 4) * 100) / 100] as [number, number])
     case 'bus': {
       const n = busCells(el)
       return Array.from({ length: n + 1 }, (_, i) => [(i - n / 2) * GRID, 0] as [number, number])
@@ -143,9 +204,12 @@ export function localPorts(el: El): [number, number][] {
   }
 }
 
+/** Comprimento máximo do barramento (células de GRID px). */
+export const BUS_MAX_CELLS = 200
+
 export function busCells(el: El): number {
   const n = Math.round(num(el, 'cells') / 2) * 2
-  return Math.min(40, Math.max(2, n || 8))
+  return Math.min(BUS_MAX_CELLS, Math.max(2, n || 8))
 }
 
 export function rotate(x: number, y: number, rot: number): [number, number] {
@@ -172,6 +236,10 @@ export function hitRect(el: El): [number, number, number, number] {
     case 'switch': return [-40, -16, 80, 32]
     case 'transformer': return [-32, -22, 64, 44]
     case 'bus': { const h = busCells(el) * 10; return [-h - 6, -9, 2 * h + 12, 18] }
+    case 'network': return [-46, -46, 92, 92]
+    case 'battery': return [-40, -24, 80, 48]
+    case 'inverter': return [-40, -24, 80, 48]
+    case 'ied': return [-28, -36, 56, 72]
     case 'load': return [-40, -18, 60, 36]
     case 'tp': return [-20, -40, 40, 68]
     case 'tc': return [-40, -18, 80, 28]

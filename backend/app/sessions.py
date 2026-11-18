@@ -7,6 +7,8 @@ import uuid
 from dataclasses import dataclass, field
 
 from .engine import RelayEngine
+from .goose import GooseNetwork
+from .mbits import MbNetwork
 from .rdb import RdbRelay
 from .settings import RelaySettings
 
@@ -34,10 +36,10 @@ class Session:
         for cls, items in st.sections.items():
             classes.append({"cls": cls, "name": st.class_names.get(cls, cls), "count": len(items)})
         return {
-            "id": self.id, "filename": self.filename, "relay_id": self.relay.id, "device": eng.device_name,
+            "model": eng.model, "id": self.id, "filename": self.filename, "relay_id": self.relay.id, "device": eng.device_name,
             "header": st.header, "classes": classes, "files": sorted(self.relay.files.keys()),
             "static": eng.panel.static_info(), "ctr": eng.ctr, "ctrn": eng.ctrn, "ptr": eng.ptr, "vnom": eng.vnom,
-            "presets": None,
+            "presets": None, "ied": None,
         }
 
 
@@ -49,6 +51,8 @@ def create_engine(relay: RdbRelay) -> RelayEngine:
 class SessionManager:
     def __init__(self) -> None:
         self.sessions: dict[str, Session] = {}
+        self.net = GooseNetwork()          # rede GOOSE do módulo IEC61850
+        self.mb = MbNetwork()              # links Mirrored Bits do app MBitConfig
 
     def create(self, relay: RdbRelay, filename: str) -> Session:
         while len(self.sessions) >= MAX_SESSIONS:
@@ -72,6 +76,8 @@ class SessionManager:
 
     def delete(self, sid: str) -> None:
         self.sessions.pop(sid, None)
+        self.net.unbind(sid)
+        self.mb.drop_session(sid)
 
     async def run(self) -> None:
         last = time.perf_counter()
@@ -90,3 +96,7 @@ class SessionManager:
                     n += 1
                 if n >= MAX_SCANS_PER_WAKE:
                     s.accum = 0.0
+            if self.net.project.ieds:
+                self.net.tick(now, self.sessions)
+            if self.mb.links:
+                self.mb.tick(now, self.sessions)

@@ -31,4 +31,25 @@ export const APPS: EclipseApp[] = [
     route: '#/systemlab',
     glyph: '⚡',
   },
+  {
+    id: 'overcurrent',
+    name: 'Overcurrent',
+    description: 'Coordenograma de sobrecorrente: curvas 51 de fase e neutro e proteção 50.',
+    route: '#/overcurrent',
+    glyph: '⚡',
+  },
+  {
+    id: 'iec61850',
+    name: 'IEC61850',
+    description: 'Leitura de arquivos .scd/.cid: blocos GOOSE, publicadores, assinantes e bits virtuais; simula GOOSE entre relés do DigitalRelay.',
+    route: '#/iec61850',
+    glyph: '⚡',
+  },
+  {
+    id: 'mbitconfig',
+    name: 'MBitConfig',
+    description: 'Links SEL Mirrored Bits entre relés: TMB de um chega no RMB do outro (portas 2/3 em MB8A/MB8B).',
+    route: '#/mbitconfig',
+    glyph: '⚡',
+  },
 ]

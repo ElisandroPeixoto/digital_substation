@@ -5,3 +5,9 @@ __pycache__/
 node_modules/
 frontend/dist/
 *.tsbuildinfo
+
+# arquivos de ajustes (dados da empresa) usados só localmente nos testes
+*.rdb
+*.scd
+*.cid
+*.icd

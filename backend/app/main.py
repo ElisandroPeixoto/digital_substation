@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from .fieldsim import FAULT_TYPES, PRESETS
 from .rdb import RdbArchive, parse_rdb
+from .scl import parse_scl
 from .selogic import split_comment
 from .sessions import SPEEDS, Session, SessionManager
 
@@ -54,6 +55,11 @@ class ButtonBody(BaseModel):
 class InputBody(BaseModel):
     name: str
     value: bool
+
+
+class BitBody(BaseModel):
+    name: str
+    mode: str = "toggle"
 
 
 class SimBody(BaseModel):
@@ -167,10 +173,19 @@ async def create_session(body: SessionCreate) -> dict:
     return info
 
 
+@app.get("/api/sessions")
+async def list_sessions() -> list:
+    """Sessões ativas (relés instanciados) e o IED do módulo IEC61850 associado a cada uma."""
+    return [{"id": s.id, "model": s.engine.model, "relay_id": s.relay.id, "device": s.engine.device_name, "filename": s.filename,
+             "running": s.running, "ied": manager.net.bindings.get(s.id),
+             "breaker_closed": None if s.engine.model == "2440" else bool(s.engine.field.breaker.closed)} for s in manager.sessions.values()]
+
+
 @app.get("/api/sessions/{sid}")
 async def get_session(sid: str) -> dict:
     s = _session(sid)
     info = s.info()
+    info["ied"] = manager.net.bindings.get(sid)
     info["presets"] = {k: v["label"] for k, v in PRESETS.items()}
     info["fault_types"] = list(FAULT_TYPES)
     return info
@@ -213,6 +228,8 @@ async def get_panel(sid: str) -> dict:
         "VAB_MAG", "VBC_MAG", "VCA_MAG", "VAB_ANG", "VBC_ANG", "VCA_ANG",
         "FREQ", "P", "Q", "S", "PF", "3I2", "VDC")}
     return {
+        "model": eng.model, "io": eng.snapshot_io() if eng.model == "2440" else None,
+        "bits": eng.snapshot_bits(),
         "time": round(eng.t, 3), "running": s.running, "speed": s.speed,
         "panel": eng.panel.snapshot(),
         "breaker": {"state": bk.state(), "closed": bk.closed, "operations": bk.open_count},
@@ -247,6 +264,37 @@ async def press_button(sid: str, body: ButtonBody) -> dict:
 async def set_input(sid: str, body: InputBody) -> dict:
     _session(sid).engine.set_input(body.name, body.value)
     return {"ok": True}
+
+
+@app.post("/api/sessions/{sid}/bits")
+async def set_bit(sid: str, body: BitBody) -> dict:
+    """SEL-2440: aciona bits virtuais (VB), de controle (CB) ou remotos (RB): set, clear, toggle ou pulse."""
+    try:
+        _session(sid).engine.set_bit(body.name, body.mode)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
+class ForceBody(BaseModel):
+    name: str
+    value: float | None = None      # None = libera
+
+
+@app.post("/api/sessions/{sid}/force")
+async def force_var(sid: str, body: ForceBody) -> dict:
+    eng = _session(sid).engine
+    try:
+        eng.force(body.name, body.value)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"forced": dict(eng.forced)}
+
+
+@app.delete("/api/sessions/{sid}/force")
+async def clear_forces(sid: str) -> dict:
+    _session(sid).engine.forced.clear()
+    return {"forced": {}}
 
 
 @app.post("/api/sessions/{sid}/breaker")
@@ -375,6 +423,213 @@ async def patch_setting(sid: str, body: SettingPatch) -> dict:
         eng.apply_setting(body.cls, body.key, body.value)
     except KeyError as exc:
         raise HTTPException(404, f"Ajuste inexistente: {exc}") from exc
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- IEC 61850
+class BindBody(BaseModel):
+    sid: str
+    ied: str | None = None
+
+
+class TopologyBody(BaseModel):
+    networks: list[dict] | None = None      # [{id, name, sids}]; None desliga a topologia (todos interligados)
+
+
+class NetBody(BaseModel):
+    vlan_aware: bool | None = None
+    latency_ms: float | None = None
+    loss_pct: float | None = None
+    status_on_loss: bool | None = None
+    cut: list[str] | None = None
+
+
+@app.post("/api/iec61850/files")
+async def iec_upload(file: UploadFile = File(...)) -> dict:
+    data = await file.read()
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(413, "Arquivo SCL maior que 50 MB.")
+    name = file.filename or "arquivo.scd"
+    try:
+        ieds = await run_in_threadpool(parse_scl, data, name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    manager.net.project.add(ieds, name)
+    return manager.net.project.to_dict()
+
+
+@app.get("/api/iec61850")
+async def iec_project() -> dict:
+    return manager.net.project.to_dict()
+
+
+@app.delete("/api/iec61850")
+async def iec_clear() -> dict:
+    net = manager.net
+    for s in manager.sessions.values():
+        s.engine.ext_bits = {}
+    net.project.clear()
+    net.bindings.clear()
+    net.cut.clear()
+    net.reset()
+    return {"ok": True}
+
+
+@app.delete("/api/iec61850/ieds/{name}")
+async def iec_remove(name: str) -> dict:
+    net = manager.net
+    sid = net.sid_of(name)
+    if sid and sid in manager.sessions:
+        manager.sessions[sid].engine.ext_bits = {}
+    net.unbind(sid or "")
+    net.cut.discard(name)
+    net.project.remove(name)
+    return {"ok": True}
+
+
+class GcbEdit(BaseModel):
+    ied: str
+    cb: str
+    fields: dict
+
+
+class SubEdit(BaseModel):
+    ied: str
+    pub: str
+    cb: str
+    fields: dict = {}
+    vbs: dict | None = None
+
+
+class ResetBody(BaseModel):
+    ied: str | None = None
+
+
+@app.post("/api/iec61850/gcb")
+async def iec_edit_gcb(body: GcbEdit) -> dict:
+    try:
+        manager.net.project.edit_gcb(body.ied, body.cb, body.fields)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return manager.net.project.to_dict()
+
+
+@app.post("/api/iec61850/sub")
+async def iec_edit_sub(body: SubEdit) -> dict:
+    try:
+        manager.net.project.edit_sub(body.ied, body.pub, body.cb, body.fields, body.vbs)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return manager.net.project.to_dict()
+
+
+@app.post("/api/iec61850/reset")
+async def iec_reset(body: ResetBody) -> dict:
+    manager.net.project.reset(body.ied)
+    return manager.net.project.to_dict()
+
+
+@app.get("/api/iec61850/status")
+async def iec_status() -> dict:
+    return manager.net.status(manager.sessions)
+
+
+@app.post("/api/iec61850/bind")
+async def iec_bind(body: BindBody) -> dict:
+    net = manager.net
+    _session(body.sid)
+    if body.ied is None:
+        net.unbind(body.sid)
+        manager.sessions[body.sid].engine.ext_bits = {}
+    else:
+        try:
+            net.bind(body.sid, body.ied)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+    net.reset()
+    return {"bindings": dict(net.bindings)}
+
+
+@app.post("/api/iec61850/network")
+async def iec_network(body: NetBody) -> dict:
+    net = manager.net
+    if body.latency_ms is not None:
+        net.latency_ms = max(0.0, min(5000.0, body.latency_ms))
+    if body.loss_pct is not None:
+        net.loss_pct = max(0.0, min(100.0, body.loss_pct))
+    if body.status_on_loss is not None:
+        net.status_on_loss = body.status_on_loss
+    if body.vlan_aware is not None:
+        net.vlan_aware = body.vlan_aware
+    if body.cut is not None:
+        net.cut = {n for n in body.cut if n in net.project.ieds}
+    return {"latency_ms": net.latency_ms, "loss_pct": net.loss_pct, "status_on_loss": net.status_on_loss, "vlan_aware": net.vlan_aware, "cut": sorted(net.cut)}
+
+
+@app.post("/api/iec61850/topology")
+async def iec_topology(body: TopologyBody) -> dict:
+    """Redes definidas no SystemLab. Com topologia ativa, relés só se comunicam por GOOSE dentro da mesma rede."""
+    if body.networks is None:
+        manager.net.networks = None
+    else:
+        manager.net.networks = [{"id": str(n.get("id", "")), "name": str(n.get("name", "")), "sids": [str(x) for x in n.get("sids", [])]}
+                                for n in body.networks[:64]]
+    return {"networks": manager.net.networks}
+
+
+# ---------------------------------------------------------------- Mirrored Bits (MBitConfig)
+class MbEnd(BaseModel):
+    sid: str
+    port: int
+
+
+class MbLinkBody(BaseModel):
+    a: MbEnd
+    b: MbEnd
+
+
+class MbLinkPatch(BaseModel):
+    cut: bool | None = None
+    loss_pct: float | None = None
+
+
+@app.get("/api/mbits")
+async def mb_status() -> dict:
+    return manager.mb.status(manager.sessions)
+
+
+@app.post("/api/mbits/links")
+async def mb_add(body: MbLinkBody) -> dict:
+    _session(body.a.sid)
+    _session(body.b.sid)
+    try:
+        lk = manager.mb.add_link(body.a.sid, body.a.port, body.b.sid, body.b.port)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"id": lk.id}
+
+
+@app.patch("/api/mbits/links/{lid}")
+async def mb_patch(lid: str, body: MbLinkPatch) -> dict:
+    lk = manager.mb.links.get(lid)
+    if lk is None:
+        raise HTTPException(404, "Link não encontrado.")
+    if body.cut is not None:
+        lk.cut = body.cut
+    if body.loss_pct is not None:
+        lk.loss_pct = max(0.0, min(100.0, body.loss_pct))
+    return {"ok": True}
+
+
+@app.delete("/api/mbits/links/{lid}")
+async def mb_delete(lid: str) -> dict:
+    manager.mb.remove_link(lid)
+    return {"ok": True}
+
+
+@app.post("/api/mbits/clear")
+async def mb_clear() -> dict:
+    manager.mb.reset_stats()
     return {"ok": True}
 
 

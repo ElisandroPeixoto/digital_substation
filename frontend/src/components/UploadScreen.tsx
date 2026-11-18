@@ -1,31 +1,30 @@
-import { Fragment, useRef, useState } from 'react'
+import { Fragment, useState } from 'react'
 import { api } from '../api'
 import type { RelaySummary, UploadSummary } from '../types'
 import { Empty } from './ui'
 
 interface Props {
-  upload: UploadSummary | null
+  uploads: UploadSummary[]
   busy: boolean
   error: string | null
-  onFile: (file: File) => void
-  onLoad: (relay: RelaySummary) => void
+  onFiles: (files: File[]) => void
+  onLoad: (upload: UploadSummary, relay: RelaySummary) => void
+  onRemove: (uploadId: string) => void
   canReturn: boolean
   onReturn: () => void
 }
 
-export function UploadScreen({ upload, busy, error, onFile, onLoad, canReturn, onReturn }: Props) {
-  const input = useRef<HTMLInputElement>(null)
+/** Tela de carga de arquivos .rdb (mesmo padrão do app IEC61850: botão "Adicionar arquivo(s)" e um cartão por arquivo). */
+export function UploadScreen({ uploads, busy, error, onFiles, onLoad, onRemove, canReturn, onReturn }: Props) {
   const [drag, setDrag] = useState(false)
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ title: string; text: string } | null>(null)
 
   const pick = (files: FileList | null) => {
-    const f = files?.[0]
-    if (f) onFile(f)
+    if (files && files.length) onFiles(Array.from(files))
   }
-  const showFile = async (relay: RelaySummary, path: string) => {
-    if (!upload) return
+  const showFile = async (upload: UploadSummary, relay: RelaySummary, path: string) => {
     try {
       const text = await api.relayFile(upload.upload_id, relay.id, path)
       setPreview({ title: `${relay.name} / ${path}`, text })
@@ -33,72 +32,83 @@ export function UploadScreen({ upload, busy, error, onFile, onLoad, canReturn, o
       setPreview({ title: path, text: String(e instanceof Error ? e.message : e) })
     }
   }
-
-  const relays = (upload?.relays ?? []).filter((r) => !q || r.name.toLowerCase().includes(q.toLowerCase()))
+  const ql = q.toLowerCase()
 
   return (
-    <div className="upload-screen">
-      <div
-        className={`dropzone ${drag ? 'drag' : ''} ${busy ? 'busy' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files) }}
-        onClick={() => input.current?.click()}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') input.current?.click() }}
-      >
-        <input ref={input} type="file" accept=".rdb" hidden onChange={(e) => { pick(e.target.files); e.target.value = '' }} />
-        <div className="drop-title">{busy ? 'Processando…' : 'Arraste o arquivo .rdb aqui ou clique para selecionar'}</div>
-        <div className="muted">O sistema decompõe o .rdb e lista os ajustes (relés) que ele contém.</div>
-        {canReturn && <button className="link" onClick={(e) => { e.stopPropagation(); onReturn() }}>← Voltar ao simulador em execução</button>}
+    <div
+      className={`upload-screen ${drag ? 'drag' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); setDrag(true) }}
+      onDragLeave={() => setDrag(false)}
+      onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files) }}
+    >
+      <div className="upload-bar">
+        <label className="btn primary">
+          {busy ? 'Processando…' : 'Adicionar arquivo(s)'}
+          <input type="file" accept=".rdb" multiple hidden onChange={(e) => { pick(e.target.files); e.target.value = '' }} />
+        </label>
+        {canReturn && <button onClick={onReturn}>← Voltar ao simulador em execução</button>}
+        {uploads.length > 0 && <input className="search" placeholder="Filtrar ajustes…" value={q} onChange={(e) => setQ(e.target.value)} />}
+        <span className="muted">{uploads.length > 0 ? uploads.map((u) => u.filename).join(' · ') : 'Arquivos .rdb do AcSELerator QuickSet'}</span>
       </div>
       {error && <div className="alert">{error}</div>}
 
-      {upload && (
-        <section className="card relays">
-          <div className="row">
-            <h3>{upload.filename}</h3>
-            <span className="muted">{upload.relays.length} ajustes encontrados</span>
-            <span className="spacer" />
-            <input className="search" placeholder="Filtrar ajustes…" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          {relays.length === 0 ? <Empty>Nenhum ajuste corresponde ao filtro.</Empty> : (
-            <table className="tbl">
-              <thead><tr><th>Ajuste</th><th>Pasta no .rdb</th><th>Firmware (FID)</th><th>Arquivos de texto</th><th /></tr></thead>
-              <tbody>
-                {relays.map((r) => (
-                  <Fragment key={r.id}>
-                    <tr>
-                      <td><b>{r.name}</b></td>
-                      <td className="mono muted">{r.id}</td>
-                      <td className="mono">{r.fid || '–'}</td>
-                      <td>
-                        <button className="link" onClick={() => setOpen(open === r.id ? null : r.id)}>
-                          {r.file_count} arquivos {open === r.id ? '▲' : '▼'}
-                        </button>
-                      </td>
-                      <td className="actions">
-                        <a className="btn" href={api.zipUrl(upload.upload_id, r.id)} download>Baixar .zip</a>
-                        <button className="primary" disabled={busy} onClick={() => onLoad(r)}>Carregar no simulador</button>
-                      </td>
-                    </tr>
-                    {open === r.id && (
-                      <tr>
-                        <td colSpan={5} className="files">
-                          {r.files.map((f) => (
-                            <button key={f} className="file-chip" onClick={() => showFile(r, f)}>{f}</button>
-                          ))}
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          )}
+      {uploads.length === 0 && (
+        <section className="card">
+          <h3>Nenhum arquivo carregado</h3>
+          <p className="hint">Envie um ou vários arquivos .rdb (ou arraste-os para cá). O sistema decompõe cada .rdb e lista os ajustes (relés) que ele contém; carregue quantos relés quiser no simulador.</p>
         </section>
       )}
+
+      {uploads.map((upload) => {
+        const relays = upload.relays.filter((r) => !ql || r.name.toLowerCase().includes(ql))
+        return (
+          <section className="card relays" key={upload.upload_id}>
+            <div className="row">
+              <h3>{upload.filename}</h3>
+              <span className="muted">{upload.relays.length} ajustes encontrados</span>
+              <span className="spacer" />
+              <button className="link" onClick={() => onRemove(upload.upload_id)}>remover da lista</button>
+            </div>
+            {relays.length === 0 ? <Empty>Nenhum ajuste corresponde ao filtro.</Empty> : (
+              <table className="tbl">
+                <thead><tr><th>Ajuste</th><th>Pasta no .rdb</th><th>Firmware (FID)</th><th>Arquivos de texto</th><th /></tr></thead>
+                <tbody>
+                  {relays.map((r) => {
+                    const key = `${upload.upload_id}/${r.id}`
+                    return (
+                      <Fragment key={key}>
+                        <tr>
+                          <td><b>{r.name}</b></td>
+                          <td className="mono muted">{r.id}</td>
+                          <td className="mono">{r.fid || '–'}</td>
+                          <td>
+                            <button className="link" onClick={() => setOpen(open === key ? null : key)}>
+                              {r.file_count} arquivos {open === key ? '▲' : '▼'}
+                            </button>
+                          </td>
+                          <td className="actions">
+                            <a className="btn" href={api.zipUrl(upload.upload_id, r.id)} download>Baixar .zip</a>
+                            <button className="primary" disabled={busy} onClick={() => onLoad(upload, r)}>Carregar no simulador</button>
+                          </td>
+                        </tr>
+                        {open === key && (
+                          <tr>
+                            <td colSpan={5} className="files">
+                              {r.files.map((f) => (
+                                <button key={f} className="file-chip" onClick={() => showFile(upload, r, f)}>{f}</button>
+                              ))}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </section>
+        )
+      })}
 
       {preview && (
         <div className="modal" onClick={() => setPreview(null)}>

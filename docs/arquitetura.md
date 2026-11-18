@@ -3,7 +3,7 @@
 ## Visão geral do Eclipse
 
 O **Eclipse** é a plataforma (shell) que hospeda os aplicativos de simulação. O frontend é uma única SPA com
-roteamento por hash: `#/` (Home), `#/about`, `#/digitalrelay` (app), `#/phaseengine` (app), `#/systemlab` (app) e `#/injecao/<sessão>` (pop-up do DigitalRelay).
+roteamento por hash: `#/` (Home), `#/about`, `#/digitalrelay` (app), `#/phaseengine` (app), `#/systemlab` (app), `#/overcurrent` (app), `#/iec61850` (app), `#/mbitconfig` (app) e `#/injecao/<sessão>` (pop-up do DigitalRelay).
 O shell (`frontend/src/eclipse/EclipseShell.tsx`) desenha o header (logo, Home, About) e a Home com os ícones dos apps;
 os apps ficam registrados em `frontend/src/eclipse/apps.ts`. Hoje existem o **SystemLab** (somente frontend: editor de unifilar e solver nodal em por unidade, em `frontend/src/systemlab/`; elementos Fonte, Barramento, Disjuntor, Chave, Transformador, Carga, TP e TC), o **PhaseEngine** (somente frontend: fasores, potências e componentes de sequência em `frontend/src/phaseengine/`, reaproveitando `phasor.ts` e `PhasorDiagram`) e o **DigitalRelay**
 (tudo abaixo). O backend FastAPI serve a SPA e a API `/api` (hoje só do DigitalRelay); novos apps podem ganhar o seu

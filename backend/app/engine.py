@@ -33,6 +33,7 @@ from .settings import RelaySettings
 EPS = 1e-9
 _DISABLED = Expr("NA")
 _RE_INPUT = re.compile(r"\bIN\d{3}\b")
+_RE_BITS = re.compile(r"\b(VB\d{3}|CB\d{3}|RB\d{2})\b")
 _RE_OUT = re.compile(r"^OUT\d{3}$")
 SQRT3 = math.sqrt(3.0)
 
@@ -93,20 +94,44 @@ def _base_names() -> list[str]:
              "SG1", "SG2", "SG3", "SG4", "ENABLED", "REMTRIP", "TR", "ULTRIP", "CL", "ULCL"]
     names += [f"IN{n}" for n in (101, 102)] + [f"IN{b}{i:02d}" for b in (3, 4, 5) for i in range(1, 15)]
     names += ["OUT101", "OUT102", "OUT103"] + [f"OUT{b}{i:02d}" for b in (3, 4, 5) for i in range(1, 9)]
-    names += [f"PB{i:02d}" for i in range(1, 9)] + [f"RB{i:02d}" for i in range(1, 33)]
+    names += [f"PB{i:02d}" for i in range(1, 9)] + [f"PB{i:02d}_PUL" for i in range(1, 9)] + [f"RB{i:02d}" for i in range(1, 33)]
     names += [f"LT{i:02d}" for i in range(1, 33)]
     names += [f"SV{i:02d}" for i in range(1, 33)] + [f"SV{i:02d}T" for i in range(1, 33)]
     names += [f"SC{i:02d}Q" for i in range(1, 33)]
+    names += [f"{p}{n}{c}" for p in ("TMB", "RMB") for n in range(1, 9) for c in "AB"]      # Mirrored Bits
+    names += [f"{p}{c}" for p in ("ROK", "RBAD", "CBAD", "LBOK") for c in "AB"]
+    return names
+
+
+def _names_2440() -> list[str]:
+    """Bits do SEL-2440: 3 cartões de 16 pontos (IN/OUT 1xx, 2xx, 3xx), bits virtuais (VB), de controle (CB) e remotos (RB)."""
+    names = [f"IN{s}{i:02d}" for s in (1, 2, 3) for i in range(1, 17)]
+    names += [f"OUT{s}{i:02d}" for s in (1, 2, 3) for i in range(1, 17)]
+    names += [f"VB{i:03d}" for i in range(1, 257)] + [f"CB{i:03d}" for i in range(1, 65)]
+    names += [f"RB{i:02d}" for i in range(1, 33)] + [f"LT{i:02d}" for i in range(1, 33)]
+    names += [f"SV{i:02d}" for i in range(1, 65)] + [f"SV{i:02d}T" for i in range(1, 65)]
+    names += ["TRGTR", "ENABLED", "HALARM", "LINKA", "LINKB", "ER"]
     return names
 
 
 class RelayEngine:
     def __init__(self, settings: RelaySettings, device_name: str = "") -> None:
         self.settings = settings
+        self.model = "2440" if "2440" in settings.header.get("RELAYTYPE", "").upper() else "751"
+        self.fixed: dict[str, bool] = {}          # bits VB/CB/RB mantidos pelo usuário (set/clear)
+        self.forced: dict[str, float] = {}        # variáveis lógicas forçadas pelo usuário (valor fixo até liberar)
+        self.ext_bits: dict[str, bool] = {}       # VBs escritos pela rede GOOSE (módulo IEC61850)
+        self.mb_bits: dict[str, float] = {}       # RMBnX e ROK/RBAD/CBAD escritos pelos links Mirrored Bits (app MBitConfig)
+        self.used_bits: list[str] = []
+        self.watched: set[str] = set()            # bits acionados pelo usuário (aparecem nos painéis mesmo sem uso nos ajustes)
         self.device_name = device_name or settings.device_name or settings.header.get("RELAYTYPE", "SEL-751")
         self.t = 0.0
         self.scan = 0
         self.vals: dict[str, float] = {n: 0.0 for n in _base_names()}
+        self.vals.update({f"VB{i:03d}": 0.0 for i in range(1, 257)})     # bits virtuais (GOOSE): 751 e 2440
+        self.used_bits = self._scan_bits()
+        if self.model == "2440":
+            self.vals.update({n: 0.0 for n in _names_2440()})
         self.analog_keys: set[str] = set()
         self.unresolved: set[str] = set()
         self.field = FieldSim()
@@ -154,6 +179,8 @@ class RelayEngine:
         self._rebuild()
         self.field.breaker.closed = self.inputs[self.bk_input].raw if self.bk_input in self.inputs else True
         self._detect_coils()
+        if self.model == "2440":
+            self.trip_outs, self.close_outs = [], []
 
     # ------------------------------------------------------------ utilitários
     def resolve(self, name: str) -> float:
@@ -192,7 +219,9 @@ class RelayEngine:
         self.group_cls = str(self.group) if str(self.group) in st.sections else "1"
         self.g = st.sections[self.group_cls]
         lcls = f"L{self.group}"
-        self.logic_cls = lcls if lcls in st.sections else ("L1" if "L1" in st.sections else "")
+        self.logic_cls = lcls if lcls in st.sections else ("L1" if "L1" in st.sections else ("L" if "L" in st.sections else ""))
+        if self.model == "2440" and "L" in st.sections:
+            self.logic_cls = "L"
         self.l = st.sections.get(self.logic_cls, {})
         self.ctr = st.number(self.group_cls, "CTR", 1.0) or 1.0
         self.ctrn = st.number(self.group_cls, "CTRN", self.ctr) or self.ctr
@@ -205,7 +234,20 @@ class RelayEngine:
         self.dnp.rebuild()
         self._build_ser()
 
+    def _scan_bits(self) -> list[str]:
+        """Bits VB/CB/RB citados nos ajustes (lógica, relatório, mapas DNP…)."""
+        bits: set[str] = set()
+        for cls, items in self.settings.sections.items():
+            if cls in ("M", "I") or cls.startswith("E") or cls.startswith("P"):
+                continue
+            for val in items.values():
+                bits.update(_RE_BITS.findall(val))
+        return sorted(bits)
+
     def _setup_inputs(self) -> None:
+        if self.model == "2440":
+            self._setup_inputs_2440()
+            return
         names: set[str] = {"IN101"}
         for cls, items in self.settings.sections.items():
             if cls in ("M", "I") or cls.startswith("E"):
@@ -230,6 +272,29 @@ class RelayEngine:
             self.inputs[self.bk_input].raw = True
             self.inputs[self.bk_input].filt = True
             self.vals[self.bk_input] = 1.0
+
+    def _setup_inputs_2440(self) -> None:
+        """SEL-2440: todas as 48 entradas (3 cartões × 16), filtro de debounce em ms (INxxxD) e bit "normal" pelo ALIAS."""
+        g = self.settings.sections.get("G", {})
+        used: set[str] = set()
+        bits: set[str] = set()
+        for cls, items in self.settings.sections.items():
+            if cls in ("M", "I") or cls.startswith("E") or cls.startswith("P"):
+                continue
+            for val in items.values():
+                used.update(_RE_INPUT.findall(val))
+                bits.update(_RE_BITS.findall(val))
+        self.used_inputs = used
+        self.used_bits = sorted(bits)
+        for s in (1, 2, 3):
+            for i in range(1, 17):
+                name = f"IN{s}{i:02d}"
+                deb_ms = self.settings.number("G", f"{name}D", 10.0) if f"{name}D" in g else 10.0
+                default = self._default_input(name) if name in used else False
+                self.inputs[name] = _Input(name=name, raw=default, filt=default, debounce=(deb_ms or 0.0) / 1000.0,
+                                           label=self.labels.get(name, ""))
+                self.vals[name] = 1.0 if default else 0.0
+        self.bk_input = ""
 
     def _default_input(self, name: str) -> bool:
         ns = normal_state(self.settings, name)
@@ -318,6 +383,43 @@ class RelayEngine:
     def pulse(self, name: str) -> None:
         self.queue.append({"type": "pulse", "name": name.upper()})
 
+    def set_bit(self, name: str, mode: str) -> None:
+        """SEL-2440: bits virtuais (VB), de controle (CB) e remotos (RB). mode: set | clear | toggle | pulse."""
+        name = name.upper()
+        if not re.fullmatch(r"(VB\d{3}|CB\d{3}|RB\d{2})", name):
+            raise ValueError(f"bit inválido: {name}")
+        self.vals.setdefault(name, 0.0)
+        self.watched.add(name)
+        if mode == "watch":                       # só passa a exibir o bit, sem alterá-lo
+            return
+        if mode == "pulse":
+            self.fixed.pop(name, None)
+            self.pulse(name)
+        elif mode == "toggle":
+            self.fixed[name] = not bool(self.vals.get(name, 0.0))
+        elif mode in ("set", "clear"):
+            self.fixed[name] = mode == "set"
+        else:
+            raise ValueError(f"modo inválido: {mode}")
+
+    def fv(self, name: str, value: float) -> float:
+        """Valor efetivo de uma variável lógica: o forçado pelo usuário, se houver."""
+        return self.forced.get(name, value) if self.forced else value
+
+    def force(self, name: str, value: float | None) -> None:
+        """Força (value 0/1 ou número para contadores/MV) ou libera (None) uma variável lógica: SVnn/SVnnT, LTnn, SCnn/SCnnQ, MVnn, OUTxxx, etc."""
+        name = name.strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,23}", name):
+            raise ValueError(f"nome inválido: {name}")
+        if value is None:
+            self.forced.pop(name, None)
+            return
+        if name not in self.vals:
+            raise ValueError(f"variável desconhecida: {name}")
+        self.forced[name] = float(value)
+        self.vals[name] = float(value)
+        self.watched.add(name)
+
     def input_raw(self, inp: "_Input") -> bool:
         """Estado físico da entrada. A entrada do 52A segue o disjuntor no modo automático."""
         if inp.name == self.bk_input and self.field.cfg.breaker_auto:
@@ -356,15 +458,61 @@ class RelayEngine:
         self._ex.pop((cls, key), None)
         self._rebuild()
         self._detect_coils()
+        if self.model == "2440":
+            self.trip_outs, self.close_outs = [], []
+            for name in self.inputs:                    # novo debounce/ALIAS pode ter mudado
+                self.inputs[name].debounce = ((self.settings.number("G", f"{name}D", 10.0) or 0.0) / 1000.0)
 
     # ------------------------------------------------------------------ ciclo
+    def _step_2440(self, dt: float) -> None:
+        """SEL-2440: sem analógicos nem proteção. Entradas (debounce) → bits do usuário → lógica SV/SC/MV/LT/OUT → SER/DNP3."""
+        v = self.vals
+        for n in self.pulses:
+            v[n] = 0.0
+        self.pulses.clear()
+        self._consume_event()
+        sim = self.field.cfg
+        v["ENABLED"] = 0.0 if sim.halarm else 1.0
+        v["HALARM"] = 1.0 if sim.halarm else 0.0
+        v["LINKA"], v["LINKB"] = float(sim.linka), float(sim.linkb)
+        for name, inp in self.inputs.items():
+            raw = inp.raw
+            if raw != inp.filt:
+                inp.pending += dt
+                if inp.pending >= inp.debounce - EPS:
+                    inp.filt = raw
+                    inp.pending = 0.0
+            else:
+                inp.pending = 0.0
+            v[name] = 1.0 if inp.filt else 0.0
+        for n, on in self.fixed.items():
+            v[n] = 1.0 if on else 0.0
+        for n, on in self.ext_bits.items():              # bits recebidos por GOOSE (prevalecem sobre os do usuário)
+            v[n] = 1.0 if on else 0.0
+        v.update(self.mb_bits)                           # bits recebidos por Mirrored Bits
+        v.update(self.forced)
+        self._logic_stage(dt)
+        self.dnp.update()
+        self._ser_stage()
+        self.t += dt
+        self.scan += 1
+        self._first_scan = False
+
     def step(self, dt: float) -> None:
+        if self.model == "2440":
+            self._step_2440(dt)
+            return
         v = self.vals
         for n in self.pulses:
             v[n] = 0.0
         self.pulses.clear()
         self._consume_event()
         self._update_inputs(dt)
+        for n, on in self.fixed.items():
+            v[n] = 1.0 if on else 0.0
+        for n, on in self.ext_bits.items():              # bits recebidos por GOOSE (prevalecem sobre os do usuário)
+            v[n] = 1.0 if on else 0.0
+        v.update(self.mb_bits)                           # bits recebidos por Mirrored Bits
         self._update_meas(dt)
         self.directional.update(dt)
         for el in self.elements:
@@ -373,6 +521,7 @@ class RelayEngine:
         self._trip_stage(dt)
         self._recloser_stage(dt)
         self._close_stage(dt)
+        v.update(self.forced)                            # forçados prevalecem sobre bits de proteção/TRIP/CLOSE
         self._logic_stage(dt)
         self._breaker_stage(dt)
         self._group_stage(dt)
@@ -391,6 +540,9 @@ class RelayEngine:
         v = self.vals
         if ev["type"] == "pb":
             v[f"PB{ev['n']:02d}"] = 1.0 if ev["pressed"] else 0.0
+            if ev["pressed"]:                         # PBnn_PUL: pulso de 1 ciclo ao pressionar
+                v[f"PB{ev['n']:02d}_PUL"] = 1.0
+                self.pulses.add(f"PB{ev['n']:02d}_PUL")
         elif ev["type"] == "pulse":
             v[ev["name"]] = 1.0
             self.pulses.add(ev["name"])
@@ -629,8 +781,8 @@ class RelayEngine:
                     if tm.do_el >= tm.do - EPS:
                         tm.out = False
                         tm.do_el = 0.0
-            v[tm.name] = 1.0 if inp else 0.0
-            v[tm.name + "T"] = 1.0 if tm.out else 0.0
+            v[tm.name] = self.fv(tm.name, 1.0 if inp else 0.0)
+            v[tm.name + "T"] = self.fv(tm.name + "T", 1.0 if tm.out else 0.0)
         for sc in self.counters:
             pv = self.settings.number(lc, sc.name + "PV", 1.0) or 1.0
             cu = bool(self.ev(lc, sc.name + "CU"))
@@ -648,10 +800,11 @@ class RelayEngine:
                 if cd and not sc.prev_cd:
                     cnt = max(cnt - 1, 0.0)
             sc.prev_cu, sc.prev_cd = cu, cd
+            cnt = self.fv(sc.name, cnt)
             v[sc.name] = cnt
-            v[sc.name + "Q"] = 1.0 if cnt >= pv else 0.0
+            v[sc.name + "Q"] = self.fv(sc.name + "Q", 1.0 if cnt >= pv else 0.0)
         for key in self.math_keys:
-            v[key] = float(self.ev(lc, key))
+            v[key] = self.fv(key, float(self.ev(lc, key)))
         for lt in self.latches:
             s = bool(self.ev(lc, lt.set_key))
             r = bool(self.ev(lc, lt.rst_key))
@@ -660,15 +813,22 @@ class RelayEngine:
                 v[lt.name] = 0.0
             elif s:
                 v[lt.name] = 1.0
+            if lt.name in self.forced:
+                v[lt.name] = self.forced[lt.name]
         rose = False
         defer = False
         watched = self.field.cfg.analog_off_outputs
         for key in self.out_keys:
-            new = 1.0 if self.ev(lc, key) else 0.0
+            new = self.fv(key, 1.0 if self.ev(lc, key) else 0.0)
             if new and not v.get(key, 0.0) and (not watched or key in watched):
                 rose = True
                 defer = defer or key in self.trip_outs
             v[key] = new
+        for ch in "AB":                                   # equações de transmissão Mirrored Bits (TMBnA/TMBnB), uma vez por ciclo
+            for n in range(1, 9):
+                tk = f"TMB{n}{ch}"
+                if tk in self.l:
+                    v[tk] = self.fv(tk, 1.0 if self.ev(lc, tk) else 0.0)
         # opção do usuário: a atuação de uma saída digital desliga a injeção analógica (efeito no próximo ciclo).
         # Se for a bobina de abertura e o disjuntor ainda está fechado, a injeção só é cortada quando ele abrir:
         # assim a corrente persiste durante o tempo de abertura (supervisão SV13..SV16/LT18..LT20).
@@ -742,6 +902,7 @@ class RelayEngine:
              "value": self.b(i.name), "debounce_ms": round(i.debounce * 1000), "pending": round(i.pending, 2),
              "breaker": i.name == self.bk_input}
             for i in self.inputs.values()
+            if self.model != "2440" or i.name in getattr(self, "used_inputs", set())
         ]
         outputs = []
         for k in self.out_keys:
@@ -788,7 +949,7 @@ class RelayEngine:
         words = sorted(([k, int(val != 0)] for k, val in v.items() if k not in self.analog_keys), key=lambda x: x[0])
         analog = {k: round(v[k], 4) for k in sorted(self.analog_keys) if k in v}
         return {
-            "time": round(self.t, 3), "group": self.group, "pending_group": self.pending_group,
+            "forced": dict(self.forced), "time": round(self.t, 3), "group": self.group, "pending_group": self.pending_group,
             "inputs": inputs, "outputs": outputs, "latches": latches, "timers": timers, "counters": counters,
             "math": maths,
             "protection": {"elements": [e.info() for e in self.elements], "disabled": self.n_off},
@@ -800,6 +961,41 @@ class RelayEngine:
                 "trip_outputs": self.trip_outs, "close_outputs": self.close_outs,
             },
             "recloser": recloser, "words": words, "analog": analog, "unresolved": sorted(self.unresolved),
+        }
+
+    def snapshot_bits(self) -> dict:
+        """Bits virtuais (VB), de controle (CB) e remotos (RB): os usados nos ajustes e os acionados pelo usuário."""
+        def bit(n: str) -> dict:
+            return {"name": n, "on": bool(self.b(n)), "held": self.fixed.get(n), "label": self.labels.get(n, ""),
+                    "used": n in self.used_bits}
+        names = sorted(set(self.used_bits) | self.watched)
+        return {"vb": [bit(n) for n in names if n.startswith("VB")], "cb": [bit(n) for n in names if n.startswith("CB")],
+                "rb": [bit(n) for n in names if n.startswith("RB")]}
+
+    def snapshot_io(self) -> dict:
+        """Painel do SEL-2440: 3 linhas (cartões 100/200/300) de 16 pontos e bits do usuário."""
+        used_out = {k for k in self.out_keys if not self.expr(self.logic_cls, k).disabled and self.expr(self.logic_cls, k).text != "0"}
+        used_in = getattr(self, "used_inputs", set())
+        slots = []
+        for s in (1, 2, 3):
+            pts = []
+            has_in = has_out = False
+            for i in range(1, 17):
+                inn, out = f"IN{s}{i:02d}", f"OUT{s}{i:02d}"
+                u_in, u_out = inn in used_in, out in used_out
+                has_in, has_out = has_in or u_in, has_out or u_out
+                pts.append({"n": i, "in": inn, "out": out, "in_used": u_in, "out_used": u_out,
+                            "in_on": bool(self.b(inn)), "out_on": bool(self.b(out)),
+                            "in_raw": bool(self.inputs[inn].raw) if inn in self.inputs else False,
+                            "in_label": self.labels.get(inn, ""), "out_label": self.expr(self.logic_cls, out).comment if u_out else ""})
+            kind = "mixed" if has_in and has_out else "in" if has_in else "out" if has_out else "empty"
+            slots.append({"slot": s, "kind": kind, "points": pts})
+        sim = self.field.cfg
+        return {
+            "slots": slots,
+            "bits": self.snapshot_bits(),
+            "status": {"enabled": not sim.halarm, "alarm": bool(sim.halarm), "mode": True,
+                       "ports": {"1A": sim.linka, "1B": sim.linkb, "2": True, "3": False}},
         }
 
     def snapshot_outputs(self) -> list[dict]:

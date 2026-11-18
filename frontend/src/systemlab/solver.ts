@@ -7,8 +7,12 @@
  * - Carga: impedância constante, calculada na tensão nominal da zona (P, FP).
  * - Disjuntor/seccionadora/TC fechados: impedância desprezível; abertos: sem ligação. TP: sem influência (medição).
  * - Partes sem caminho fechado até uma fonte ficam desenergizadas (V = 0).
+ * - Inversor (BESS): potência constante P/Q no lado CA (resolvida por iteração), limitada pela potência nominal e pelo SOC da(s)
+ *   bateria(s) ligadas ao seu lado CC; segue a rede (desliga com tensão CA < 0,1 pu). Se a ilha CA não tem fonte, o primeiro
+ *   inversor apto (SOC acima do mínimo) forma a rede: fonte de tensão de 1 pu (tensão CA nominal) com 5 % de impedância interna.
+ *   A bateria é estática: o SOC é um parâmetro (não evolui no tempo); o resultado mostra a corrente CC e o tempo até o limite de SOC.
  */
-import { busCells, flag, num, type El, type Wire } from './model'
+import { busCells, flag, isComm, num, type El, type Wire } from './model'
 
 export const SBASE = 100 // MVA
 const Y_SWITCH = 1e4 // pu (Z = 1e-4 pu)
@@ -41,6 +45,8 @@ export interface ElResult {
   q: number[]
   /** Fonte/carga: potência entregue/consumida; TP: tensão secundária; TC: corrente secundária; trafo: carregamento */
   extra: Record<string, number>
+  /** Observação de estado (ex.: inversor limitado pelo SOC). */
+  note?: string
 }
 
 export interface Solution {
@@ -89,12 +95,17 @@ class UF {
 
 interface Branch { a: number; b: number; y: Cx }
 
-export function solve(els: El[], wires: Wire[]): Solution {
+/** `energize` falso (simulação parada): fontes e inversores desligados, nada é energizado. */
+export function solve(allEls: El[], allWires: Wire[], energize = true): Solution {
+  // elementos de comunicação (IED, Rede) e suas ligações não participam do cálculo elétrico
+  const comm = new Set(allEls.filter((e) => isComm(e.kind)).map((e) => e.id))
+  const els = allEls.filter((e) => !comm.has(e.id) && (energize || e.kind !== 'source'))
+  const wires = allWires.filter((w) => !comm.has(w.a[0]) && !comm.has(w.b[0]))
   // ---- nós elétricos: terminais ligados por fios (e todos os terminais de um barramento) formam um nó
   const idx = new Map<string, number>()
   const elById = new Map<number, El>()
   let count = 0
-  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : 2)
+  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'battery' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : 2)
   for (const e of els) {
     elById.set(e.id, e)
     for (let k = 0; k < nPorts(e); k++) idx.set(`${e.id}:${k}`, count++)
@@ -107,6 +118,60 @@ export function solve(els: El[], wires: Wire[]): Solution {
     if (a != null && b != null) uf.union(a, b)
   }
   const node = (e: El, k: number) => uf.find(idx.get(`${e.id}:${k}`)!)
+
+  // ---- conectividade por ramos fechados (disjuntor/chave fechados, TC, transformador): ilhas CA e CC
+  const uc = new UF(count)
+  for (const e of els) {
+    if ((e.kind === 'breaker' || e.kind === 'switch') ? flag(e, 'closed') : (e.kind === 'tc' || e.kind === 'transformer')) uc.union(node(e, 0), node(e, 1))
+  }
+
+  // ---- BESS: inversores alimentados pelas baterias da mesma ilha CC (nós ligados por disjuntores/chaves fechados).
+  // Com fonte na ilha CA o inversor segue a rede (P/Q constantes); sem fonte, o primeiro inversor habilitado forma a rede (tensão fixa).
+  interface Inv {
+    e: El; nDc: number; nAc: number; p: number; q: number; active: boolean; note: string; pdc: number; eff: number
+    forming: boolean; canForm: boolean; vac: number; ys: Cx; E: Cx; iInj: Cx
+  }
+  const bats = els.filter((e) => e.kind === 'battery')
+  const invs: Inv[] = els.filter((e) => e.kind === 'inverter').map((e) => {
+    const nDc = node(e, 0)
+    const nAc = node(e, 1)
+    const inv: Inv = {
+      e, nDc, nAc, p: 0, q: 0, active: false, note: '', pdc: 0, eff: Math.min(1, Math.max(num(e, 'eff') / 100, 0.01)),
+      forming: false, canForm: false, vac: Math.max(num(e, 'vac') || 0.48, 1e-6), ys: cx(), E: cx(1, 0), iInj: cx(),
+    }
+    const bs = bats.filter((b) => uc.find(node(b, 0)) === uc.find(nDc))
+    if (!energize) { inv.note = 'simulação parada'; return inv }
+    if (!flag(e, 'on')) { inv.note = 'desligado'; return inv }
+    if (bs.length === 0) { inv.note = 'sem bateria no lado CC'; return inv }
+    let p = num(e, 'p')
+    let q = num(e, 'q')
+    const sn = Math.max(num(e, 'sn'), 1e-6)
+    const sAbs = Math.hypot(p, q)
+    if (sAbs > sn) { p *= sn / sAbs; q *= sn / sAbs; inv.note = 'limitado pela potência nominal' }
+    const cap = bs.reduce((a, b) => a + num(b, 'cap'), 0)
+    const soc = cap > 0 ? bs.reduce((a, b) => a + num(b, 'soc') * num(b, 'cap'), 0) / cap : num(bs[0], 'soc')
+    const socMin = Math.max(...bs.map((b) => num(b, 'socmin')))
+    inv.canForm = soc > socMin
+    if (p > 0 && soc <= socMin) { p = 0; inv.note = 'SOC no mínimo: sem descarga' }
+    if (p < 0 && soc >= Math.min(...bs.map((b) => num(b, 'socmax')))) { p = 0; inv.note = 'SOC no máximo: sem carga' }
+    inv.p = p; inv.q = q; inv.active = true
+    return inv
+  })
+  // ilhas CA sem fonte: o primeiro inversor apto forma a rede
+  {
+    const srcIslands = new Set(els.filter((e) => e.kind === 'source').map((e) => uc.find(node(e, 0))))
+    const formed = new Set<number>()
+    for (const v of invs) {
+      const root = uc.find(v.nAc)
+      if (!v.active || !v.canForm || srcIslands.has(root) || formed.has(root)) continue
+      formed.add(root)
+      v.forming = true
+      v.note = 'formando rede (ilhado)'
+      const sn = Math.max(num(v.e, 'sn'), 1e-6)
+      v.ys = div(cx(1), zUnit((0.05 * SBASE) / sn, 10))        // impedância interna de 5 % na base do inversor
+    }
+  }
+
 
   // ---- bases de tensão (kV) por nó: a partir das fontes, trocando de base nos transformadores
   const base = new Map<number, number>()
@@ -130,6 +195,7 @@ export function solve(els: El[], wires: Wire[]): Solution {
     const n = node(e, 0)
     if (!base.has(n)) { base.set(n, Math.max(num(e, 'vkv'), 1e-6)); queue.push(n) }
   }
+  for (const v of invs) if (v.forming && !base.has(v.nAc)) { base.set(v.nAc, v.vac); queue.push(v.nAc) }
   while (queue.length) {
     const n = queue.shift()!
     for (const { to, ratio } of adj.get(n) ?? []) {
@@ -180,10 +246,10 @@ export function solve(els: El[], wires: Wire[]): Solution {
     }
   }
 
-  // ---- componentes conexos que contêm alguma fonte são resolvidos; o resto fica desenergizado
-  const uc = new UF(count)
-  for (const b of branches) uc.union(b.a, b.b)
-  const srcRoots = new Set(sources.map((s) => uc.find(s.n)))
+  for (const v of invs) if (v.forming) { addShunt(v.nAc, v.ys); addInj(v.nAc, mul(v.E, v.ys)) }
+
+  // ---- componentes conexos que contêm alguma fonte (ou inversor formador) são resolvidos; o resto fica desenergizado
+  const srcRoots = new Set([...sources.map((s) => uc.find(s.n)), ...invs.filter((v) => v.forming).map((v) => uc.find(v.nAc))])
   const V = new Map<number, Cx>()
   const groups = new Map<number, number[]>()
   const allNodes = new Set<number>()
@@ -194,6 +260,7 @@ export function solve(els: El[], wires: Wire[]): Solution {
     if (!groups.has(r)) groups.set(r, [])
     groups.get(r)!.push(n)
   }
+  const solveGroups = (pq: Map<number, Cx>) => {
   for (const nodes of groups.values()) {
     const pos = new Map(nodes.map((n, i) => [n, i]))
     const m = nodes.length
@@ -202,7 +269,7 @@ export function solve(els: El[], wires: Wire[]): Solution {
     for (const n of nodes) {
       const i = pos.get(n)!
       Y[i][i] = add(Y[i][i], shunt.get(n) ?? cx())
-      I[i] = add(I[i], inj.get(n) ?? cx())
+      I[i] = add(add(I[i], inj.get(n) ?? cx()), pq.get(n) ?? cx())
     }
     for (const b of branches) {
       const i = pos.get(b.a)
@@ -215,6 +282,39 @@ export function solve(els: El[], wires: Wire[]): Solution {
     }
     const x = gauss(Y, I)
     nodes.forEach((n, i) => V.set(n, x[i]))
+  }
+  }
+
+  // inversores seguidores: injeção de corrente I = conj(S/V), iterada até convergir (potência constante)
+  const pq = new Map<number, Cx>()
+  const hasInv = invs.some((v) => v.active && !v.forming)
+  for (let it = 0; it < (hasInv ? 30 : 1); it++) {
+    pq.clear()
+    let changed = false
+    for (const v of invs) {
+      if (!v.active || v.forming) continue
+      const Vn = V.get(v.nAc) ?? cx(1, 0)
+      if (abs(Vn) < 0.1) { v.active = false; v.note = 'sem tensão CA (sem fonte nem inversor formador de rede)'; changed = true; continue }
+      pq.set(v.nAc, add(pq.get(v.nAc) ?? cx(), conj(div(cx(v.p / SBASE, v.q / SBASE), Vn))))
+    }
+    const prev = invs.filter((v) => v.active && !v.forming).map((v) => V.get(v.nAc) ?? cx(1, 0))
+    solveGroups(pq)
+    if (!hasInv) break
+    const cur = invs.filter((v) => v.active && !v.forming).map((v) => V.get(v.nAc) ?? cx(1, 0))
+    if (!changed && prev.length === cur.length && prev.every((p, k) => abs(sub(p, cur[k])) < 1e-8)) break
+  }
+  for (const v of invs) {
+    if (!v.active) continue
+    const Vn = V.get(v.nAc) ?? cx()
+    if (v.forming) {
+      v.iInj = mul(sub(v.E, Vn), v.ys)                   // o formador entrega o que a ilha consome
+      const S = mul(Vn, conj(v.iInj))
+      v.p = S.re * SBASE
+      v.q = S.im * SBASE
+    } else {
+      v.iInj = conj(div(cx(v.p / SBASE, v.q / SBASE), abs(Vn) < 0.1 ? cx(1, 0) : Vn))
+    }
+    v.pdc = v.p >= 0 ? v.p / v.eff : v.p * v.eff        // + descarga da bateria; − carga (a bateria recebe menos que a rede entrega)
   }
 
   // ---- resultados por elemento
@@ -231,6 +331,21 @@ export function solve(els: El[], wires: Wire[]): Solution {
     for (let k = 0; k < ports; k++) nodeEnergized.set(`${e.id}:${k}`, abs(vOf(node(e, k))) > 1e-6)
   }
   const totals = { gen: 0, genQ: 0, load: 0, loadQ: 0, loss: 0 }
+  // ilhas CC energizadas (bateria + inversor ativo); tudo que está nelas (fios, disjuntores) fica energizado
+  const dcActive = new Set(invs.filter((v) => v.active).map((v) => uc.find(v.nDc)))
+  const acNode = (n: number) => abs(vOf(n)) > 1e-6
+  for (const e of els) {
+    for (let k = 0; k < nPorts(e); k++) {
+      const n = node(e, k)
+      if (!acNode(n) && dcActive.has(uc.find(n)) && e.kind !== 'bus') nodeEnergized.set(`${e.id}:${k}`, true)
+    }
+  }
+  const dcInfo = (root: number) => {
+    const bs = bats.filter((b) => uc.find(node(b, 0)) === root)
+    const vdc = bs.length ? Math.max(num(bs[0], 'vdc'), 1e-9) : 0
+    const pdc = invs.filter((v) => v.active && uc.find(v.nDc) === root).reduce((a, v) => a + v.pdc, 0)
+    return { vdc, idc: vdc > 0 ? (pdc * 1e6) / vdc : 0, pdc }
+  }
 
   for (const e of els) {
     const r: ElResult = { energized: false, v: [], i: [], p: [], q: [], extra: {} }
@@ -256,6 +371,36 @@ export function solve(els: El[], wires: Wire[]): Solution {
       r.p = [p]; r.q = [q]
       r.extra = { p, q }
       if (r.energized) { totals.load += p; totals.loadQ += q }
+    } else if (e.kind === 'inverter') {
+      const v = invs.find((x) => x.e.id === e.id)!
+      const injI = v.active ? v.iInj : cx()
+      const iIn = cx(-injI.re, -injI.im)
+      const [p, q] = sFlow(v.nAc, iIn)                    // entrando no elemento (negativo = injeta na rede)
+      r.energized = v.active
+      r.v = [{ mag: 0, ang: 0 }, kv(v.nAc)]
+      r.i = [{ mag: 0, ang: 0 }, amps(v.nAc, iIn)]
+      r.p = [v.active ? v.pdc : 0, p]; r.q = [0, q]
+      r.extra = { p: -p, q: -q, pdc: v.pdc, eff: v.eff * 100, loading: (Math.hypot(p, q) / Math.max(num(e, 'sn'), 1e-9)) * 100 }
+      r.note = v.note || (v.active ? (v.p >= 0 ? 'descarregando' : 'carregando') : '')
+      if (v.forming && r.extra.loading > 100) r.note = 'sobrecarga: acima da potência nominal'
+      if (v.active) {
+        if (-p >= 0) totals.gen += -p; else totals.load += p
+        totals.genQ += -q
+      }
+    } else if (e.kind === 'battery') {
+      const at = invs.filter((v) => v.active && uc.find(v.nDc) === uc.find(n0))
+      const mates = bats.filter((b) => uc.find(node(b, 0)) === uc.find(n0))
+      const capSum = mates.reduce((a, b) => a + num(b, 'cap'), 0)
+      const pdcAll = at.reduce((a, v) => a + v.pdc, 0)
+      const pb = capSum > 0 ? pdcAll * (num(e, 'cap') / capSum) : pdcAll / Math.max(mates.length, 1)
+      const cap = num(e, 'cap')
+      const soc = num(e, 'soc')
+      const hours = pb > 1e-9 ? (cap * Math.max(soc - num(e, 'socmin'), 0)) / 100 / (pb * 1000)
+        : pb < -1e-9 ? (cap * Math.max(num(e, 'socmax') - soc, 0)) / 100 / (-pb * 1000) : -1
+      r.energized = at.length > 0
+      r.p = [pb]; r.q = [0]
+      r.extra = { pdc: pb, idc: (pb * 1e6) / Math.max(num(e, 'vdc'), 1e-9), soc, hours, energy: (cap * soc) / 100 }
+      r.note = at.length === 0 ? 'sem inversor ativo no lado CC' : pb > 0 ? 'descarregando' : pb < 0 ? 'carregando' : 'em espera'
     } else if (e.kind === 'tp') {
       r.v = [kv(n0)]
       const vp = Math.max(num(e, 'vp'), 1e-9)
@@ -280,6 +425,21 @@ export function solve(els: El[], wires: Wire[]): Solution {
         r.extra = { loading: (Math.hypot(p1, q1) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss: p1 + p2 }
         totals.loss += p1 + p2
       }
+    }
+    if ((e.kind === 'breaker' || e.kind === 'switch' || e.kind === 'tc') && !r.energized) {
+      const roots = [uc.find(n0), uc.find(node(e, 1))]
+      const root = roots.find((x) => dcActive.has(x))
+      if (root !== undefined) {
+        const d = dcInfo(root)
+        r.energized = true
+        r.v = []; r.i = []; r.p = []; r.q = []
+        r.extra = { dc: 1, vdc: d.vdc, idc: d.idc, pdc: d.pdc, ...(e.kind === 'tc' ? { isec: Math.abs(d.idc) / Math.max(num(e, 'ip') / Math.max(num(e, 'is'), 1e-9), 1e-9), ratio: 1 } : {}) }
+      }
+    }
+    if (e.kind === 'breaker' || e.kind === 'switch') {
+      const dcDeclared = flag(e, 'dc')
+      if (r.extra.dc && !dcDeclared) r.note = `${e.kind === 'breaker' ? 'disjuntor' : 'chave'} marcado como CA em circuito CC`
+      else if (!r.extra.dc && r.energized && dcDeclared) r.note = `${e.kind === 'breaker' ? 'disjuntor' : 'chave'} marcado como CC em circuito CA`
     }
     res.set(e.id, r)
   }

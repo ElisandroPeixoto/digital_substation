@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api } from '../api'
+import { simTime, usePrefs } from '../prefs'
+import type { SessionBrief } from '../types'
 import {
-  GRID, KINDS, KIND_ORDER, busCells, flag, hitRect, makeElement, num, rotate, worldPorts,
+  BUS_MAX_CELLS, GRID, KINDS, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
   type Diagram, type El, type Kind, type PortRef,
 } from './model'
 import { solve, type ElResult, type Ph } from './solver'
@@ -19,6 +22,7 @@ type Drag =
   | { mode: 'seg'; wireId: number; idx: number; path: Pt[]; horiz: boolean }
   | { mode: 'box'; x0: number; y0: number; base: number[] }
   | { mode: 'wire'; from: PortRef; sx: number; sy: number }
+  | { mode: 'busend'; id: number; side: 'lo' | 'hi'; d0: Diagram }
   | null
 interface Box { x0: number; y0: number; x1: number; y1: number }
 
@@ -29,6 +33,65 @@ function bounds(el: El): [number, number, number, number] {
   const xs = pts.map((p) => p[0])
   const ys = pts.map((p) => p[1])
   return [el.x + Math.min(...xs), el.y + Math.min(...ys), el.x + Math.max(...xs), el.y + Math.max(...ys)]
+}
+
+/**
+ * Redimensiona o barramento `id` para `n1` células mantendo fixa a extremidade oposta à `side` ('hi' = extremidade do último terminal,
+ * 'lo' = extremidade do terminal 0). As ligações acompanham seus terminais; as dos terminais removidos são apagadas.
+ */
+function resizeBus(d0: Diagram, id: number, n1raw: number, side: 'lo' | 'hi'): Diagram {
+  const el = d0.els.find((e) => e.id === id)
+  if (!el || !isBar(el.kind)) return d0
+  const n0 = busCells(el)
+  const n1 = clamp(Math.round(n1raw / 2) * 2, 2, BUS_MAX_CELLS)
+  const [ux, uy] = rotate(1, 0, el.rot)
+  const half0 = n0 * (GRID / 2)
+  const half1 = n1 * (GRID / 2)
+  const sgn = side === 'hi' ? 1 : -1                      // 'hi': extremidade fixa é a do terminal 0 (lado -u)
+  const fx = el.x - sgn * ux * half0
+  const fy = el.y - sgn * uy * half0
+  const cx = fx + sgn * ux * half1
+  const cy = fy + sgn * uy * half1
+  const shift = side === 'hi' ? 0 : n1 - n0               // índices contados a partir da extremidade fixa
+  const moved = (r: PortRef): PortRef | null => {
+    if (r[0] !== id) return r
+    const k = r[1] + shift
+    return k < 0 || k > n1 ? null : [id, k]
+  }
+  const wires = d0.wires.flatMap((w) => {
+    const a = moved(w.a)
+    const b = moved(w.b)
+    return a && b ? [{ ...w, a, b }] : []
+  })
+  const els = d0.els.map((e) => (e.id === id ? { ...e, x: cx, y: cy, p: { ...e.p, cells: n1 } } : e))
+  return { ...d0, els, wires }
+}
+
+/** Redes de comunicação do diagrama: Redes ligadas entre si formam uma só; cada IED ligado a ela entra com o relé associado. */
+function computeNetworks(dg: Diagram): { id: string; name: string; sids: string[] }[] | null {
+  if (!dg.els.some((e) => isComm(e.kind))) return null
+  const nets = dg.els.filter((e) => e.kind === 'network')
+  const parent = new Map<number, number>(nets.map((n) => [n.id, n.id]))
+  const find = (x: number): number => { while (parent.get(x) !== x) x = parent.get(x)!; return x }
+  const byId = new Map(dg.els.map((e) => [e.id, e]))
+  for (const w of dg.wires) {
+    const a = byId.get(w.a[0])
+    const b = byId.get(w.b[0])
+    if (a?.kind === 'network' && b?.kind === 'network') parent.set(find(a.id), find(b.id))
+  }
+  const groups = new Map<number, { names: string[]; sids: Set<string> }>()
+  for (const n of nets) {
+    const g = groups.get(find(n.id)) ?? { names: [], sids: new Set<string>() }
+    g.names.push(n.name)
+    groups.set(find(n.id), g)
+  }
+  for (const w of dg.wires) {
+    const a = byId.get(w.a[0])
+    const b = byId.get(w.b[0])
+    const [net, ied] = a?.kind === 'network' && b?.kind === 'ied' ? [a, b] : b?.kind === 'network' && a?.kind === 'ied' ? [b, a] : [undefined, undefined]
+    if (net && ied?.sid) groups.get(find(net.id))?.sids.add(ied.sid)
+  }
+  return [...groups.values()].map((g) => ({ id: g.names.join('+'), name: g.names.join(' + '), sids: [...g.sids] }))
 }
 
 function emptyDiagram(): Diagram {
@@ -127,12 +190,21 @@ const ph = (p: Ph | undefined, unit: string, d = 2) => (p ? `${fmt(p.mag, d)} ${
 function valueLines(el: El, r: ElResult | undefined): string[] {
   if (!r) return []
   switch (el.kind) {
+    case 'ied':
+    case 'network': return []
+    case 'battery': return [`SOC ${fmt(r.extra.soc, 0)}% · ${fmt(r.extra.pdc)} MW`, r.note ?? '']
+    case 'inverter': return [r.energized ? `${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar` : (r.note ?? 'inativo'), ...(r.energized && r.note ? [r.note] : [])]
     case 'bus': return [r.energized ? ph(r.v[0], 'kV') : 'desenergizado']
     case 'source': return [`${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar`]
     case 'load': return r.energized ? [`${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar`, `${fmt(r.v[0].mag)} kV`] : ['desenergizado']
     case 'breaker':
-    case 'switch': return flag(el, 'closed') ? [r.energized ? `${fmt(r.i[0].mag, 1)} A` : 'desenergizado'] : ['aberto']
-    case 'tc': return [r.energized ? `${fmt(r.i[0].mag, 1)} A → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
+    case 'switch': {
+      if (!flag(el, 'closed')) return ['aberto']
+      const main = r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : r.energized ? `${fmt(r.i[0].mag, 1)} A` : 'desenergizado'
+      return r.note ? [main, `⚠ ${r.note}`] : [main]
+    }
+    case 'tc': if (r.extra.dc) return [`${fmt(r.extra.idc, 1)} A CC`]
+      return [r.energized ? `${fmt(r.i[0].mag, 1)} A → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
     case 'transformer': return r.energized ? [`${fmt(r.p[0])} MW · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'tp': return [r.energized ? `${fmt(r.extra.vsec, 1)} V` : 'desenergizado']
   }
@@ -171,6 +243,21 @@ export function SystemLabApp() {
   const [dragIds, setDragIds] = useState<number[]>([]) // elementos sendo arrastados: mostram só o símbolo
   const [box, setBox] = useState<Box | null>(null)      // retângulo de seleção
   const [showVals, setShowVals] = useState(true)
+  const { prefs } = usePrefs()
+  const [run, setRun] = useState<'stopped' | 'playing' | 'paused'>('stopped')   // parado: fontes desligadas; Play energiza e roda
+  const [speed, setSpeed] = useState(1)
+  const [simT, setSimT] = useState(0)                                          // tempo simulado (s)
+  const touched = useRef(false)                                                // só mexe nos relés depois de o usuário usar Play/Pause
+  const [sessions, setSessions] = useState<SessionBrief[]>([])      // relés do DigitalRelay (para os elementos IED)
+  const [iecIeds, setIecIeds] = useState<string[]>([])               // IEDs do projeto IEC61850
+  const [panels, setPanels] = useState<{ tools: boolean; side: boolean }>(() => {
+    try { return { tools: true, side: true, ...JSON.parse(localStorage.getItem('systemlab.panels') ?? '{}') } } catch { return { tools: true, side: true } }
+  })
+  const togglePanel = (k: 'tools' | 'side') => setPanels((p) => {
+    const n = { ...p, [k]: !p[k] }
+    try { localStorage.setItem('systemlab.panels', JSON.stringify(n)) } catch { /* ignora */ }
+    return n
+  })
   const svgRef = useRef<SVGSVGElement>(null)
   const drag = useRef<Drag>(null)
   const viewRef = useRef(view)
@@ -179,11 +266,119 @@ export function SystemLabApp() {
 
   const dgRef = useRef(dg)
   dgRef.current = dg
-  const sol = useMemo(() => solve(dg.els, dg.wires), [dg])
+  const sol = useMemo(() => solve(dg.els, dg.wires, run !== 'stopped'), [dg, run])
+
+  // relógio da simulação (tempo real × velocidade)
+  useEffect(() => {
+    if (run !== 'playing') return
+    let last = performance.now()
+    const id = setInterval(() => {
+      const n = performance.now()
+      setSimT((t) => t + ((n - last) / 1000) * speed)
+      last = n
+    }, 100)
+    return () => clearInterval(id)
+  }, [run, speed])
+
+  // Play/Pause também executam/pausam os relés do DigitalRelay associados aos IEDs do diagrama
+  const iedSids = dg.els.filter((e) => e.kind === 'ied' && e.sid).map((e) => e.sid!).sort().join(',')
+  useEffect(() => {
+    if (!touched.current) return
+    for (const sid of iedSids.split(',').filter(Boolean)) api.control(sid, { running: run === 'playing', speed }).catch(() => undefined)
+  }, [run, speed, iedSids])
+  const play = () => { touched.current = true; setRun('playing') }
+  const pause = () => { touched.current = true; setRun('paused') }
+  const stop = () => { touched.current = true; setRun('stopped'); setSimT(0) }
   const elById = useMemo(() => new Map(dg.els.map((e) => [e.id, e])), [dg.els])
 
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(dg)) } catch { /* ignora */ }
+  }, [dg])
+
+  // relés do DigitalRelay disponíveis (consulta periódica; sem backend a lista fica vazia)
+  useEffect(() => {
+    let on = true
+    const f = () => api.sessions().then((s) => { if (on) setSessions(s) }).catch(() => undefined)
+    f()
+    const t = setInterval(f, 2000)
+    return () => { on = false; clearInterval(t) }
+  }, [])
+
+  // redes de comunicação: enviadas ao backend, que só deixa os relés se falarem por GOOSE dentro da mesma rede
+  const topo = useMemo(() => computeNetworks(dg), [dg])
+  const topoKey = JSON.stringify(topo)
+  useEffect(() => {
+    const t = setTimeout(() => { api.iecTopology(topo).catch(() => undefined) }, 300)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topoKey])
+  // associação IED ↔ disjuntor/TC/TP: estado do disjuntor nos dois sentidos; correntes (TC) e tensões (TP) injetadas no relé
+  const syncRef = useRef(new Map<number, { rel?: boolean; diag?: boolean; hold: number; sent: string; t: number }>())
+  useEffect(() => {
+    const now = Date.now()
+    for (const ied of dg.els) {
+      if (ied.kind !== 'ied' || !ied.sid) continue
+      const s = sessions.find((x) => x.id === ied.sid)
+      if (!s) continue
+      const st = syncRef.current.get(ied.id) ?? { hold: 0, sent: '', t: 0 }
+      syncRef.current.set(ied.id, st)
+      const L = ied.links ?? {}
+      const brk = L.breaker != null ? elById.get(L.breaker) : undefined
+      if (brk?.kind === 'breaker' && s.breaker_closed != null) {
+        const dgc = flag(brk, 'closed')
+        if (st.rel === undefined || (dgc !== st.diag)) {                       // 1ª vez ou o diagrama mudou: envia ao relé
+          if (dgc !== s.breaker_closed) api.forceBreaker(s.id, dgc).catch(() => undefined)
+          st.rel = dgc; st.diag = dgc; st.hold = now + 2500
+        } else if (now > st.hold && s.breaker_closed !== st.rel) {             // o relé mudou (ex.: trip): reflete no diagrama
+          st.rel = s.breaker_closed; st.diag = s.breaker_closed
+          if (dgc !== s.breaker_closed) updateEl(brk.id, (x) => ({ ...x, p: { ...x.p, closed: s.breaker_closed! } }))
+        }
+      } else { st.rel = undefined; st.diag = undefined }
+      const tc = L.tc != null ? elById.get(L.tc) : undefined
+      const tp = L.tp != null ? elById.get(L.tp) : undefined
+      if (tc?.kind === 'tc' || tp?.kind === 'tp') {
+        const patch: Record<string, number | boolean> = { analog_on: true }
+        const r = tc?.kind === 'tc' ? sol.res.get(tc.id) : undefined
+        if (tc?.kind === 'tc') {
+          const mag = r?.energized ? r.i[0].mag : 0
+          const ang = r?.energized ? r.i[0].ang : 0
+          Object.assign(patch, { ia_mag: mag, ib_mag: mag, ic_mag: mag, ia_ang: ang, ib_ang: ang - 120, ic_ang: ang + 120 })
+        }
+        const rv = tp?.kind === 'tp' ? sol.res.get(tp.id) : undefined
+        if (tp?.kind === 'tp') {
+          const mag = rv?.energized ? (rv.v[0].mag * 1000) / Math.sqrt(3) : 0
+          const ang = rv?.energized ? rv.v[0].ang : 0
+          Object.assign(patch, { va_mag: mag, vb_mag: mag, vc_mag: mag, va_ang: ang, vb_ang: ang - 120, vc_ang: ang + 120 })
+        }
+        const key = JSON.stringify(patch, (_, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v))
+        if (key !== st.sent || now - st.t > 5000) {
+          st.sent = key; st.t = now
+          api.sim(s.id, patch).catch(() => undefined)
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, dg, sol])
+  // IEDs por Rede: Redes ligadas entre si formam um grupo, e os IEDs de cada uma contam para todas
+  const memberCount = useMemo(() => {
+    const byId = new Map(dg.els.map((e) => [e.id, e]))
+    const parent = new Map<number, number>(dg.els.filter((e) => e.kind === 'network').map((e) => [e.id, e.id]))
+    const find = (x: number): number => { while (parent.get(x) !== x) x = parent.get(x)!; return x }
+    for (const w of dg.wires) {
+      const a = byId.get(w.a[0])
+      const b = byId.get(w.b[0])
+      if (a?.kind === 'network' && b?.kind === 'network') parent.set(find(a.id), find(b.id))
+    }
+    const ieds = new Map<number, Set<number>>()
+    for (const w of dg.wires) {
+      const a = byId.get(w.a[0])
+      const b = byId.get(w.b[0])
+      const [net, ied] = a?.kind === 'network' && b?.kind === 'ied' ? [a, b] : b?.kind === 'network' && a?.kind === 'ied' ? [b, a] : [undefined, undefined]
+      if (net && ied) ieds.set(find(net.id), (ieds.get(find(net.id)) ?? new Set()).add(ied.id))
+    }
+    const m = new Map<number, number>()
+    for (const e of dg.els) if (e.kind === 'network') m.set(e.id, ieds.get(find(e.id))?.size ?? 0)
+    return m
   }, [dg])
 
   const toWorld = useCallback((cx: number, cy: number): [number, number] => {
@@ -329,6 +524,12 @@ export function SystemLabApp() {
     for (const w of dg.wires) if (w.via?.length && orig.has(w.a[0]) && orig.has(w.b[0])) vias.set(w.id, w.via)
     drag.current = { mode: 'move', id: el.id, ox: wx - el.x, oy: wy - el.y, orig, vias }
   }
+  const onBusEndDown = (e: React.PointerEvent, el: El, side: 'lo' | 'hi') => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    capture(e)
+    drag.current = { mode: 'busend', id: el.id, side, d0: dgRef.current }
+  }
   const onPortDown = (e: React.PointerEvent, ref: PortRef) => {
     if (e.button !== 0) return
     e.stopPropagation()
@@ -370,6 +571,17 @@ export function SystemLabApp() {
           wires: d.vias.size ? g.wires.map((w) => { const v = d.vias.get(w.id); return v ? { ...w, via: v.map(([px, py]) => [px + dx, py + dy] as Pt) } : w }) : g.wires,
         }))
       }
+    } else if (d.mode === 'busend') {
+      const el0 = d.d0.els.find((x) => x.id === d.id)
+      if (!el0) return
+      const [ux, uy] = rotate(1, 0, el0.rot)
+      const half = busCells(el0) * (GRID / 2)
+      const sgn = d.side === 'hi' ? 1 : -1
+      const fx = el0.x - sgn * ux * half
+      const fy = el0.y - sgn * uy * half
+      const t = ((wx - fx) * ux + (wy - fy) * uy) * sgn            // distância (com sinal) da extremidade fixa até o ponteiro
+      const n1 = Math.max(2, Math.round(t / GRID / 2) * 2)
+      setDg(resizeBus(d.d0, d.id, n1, d.side))
     } else if (d.mode === 'seg') {
       // arrastar um trecho da ligação: ele se desloca na perpendicular; nos trechos presos aos terminais surge um cotovelo
       const k = d.horiz ? 1 : 0
@@ -490,13 +702,41 @@ export function SystemLabApp() {
   }
 
   const wiringPos = wiring ? portPos(wiring) : null
+  const commLines = (el: El): string[] => {
+    if (el.kind === 'network') return [`${memberCount.get(el.id) ?? 0} IED(s) na rede`]
+    const s = sessions.find((x) => x.id === el.sid)
+    if (!el.sid) return ['sem relé associado']
+    if (!s) return ['relé encerrado']
+    const L = el.links ?? {}
+    const nm = (id?: number) => (id != null ? elById.get(id)?.name : undefined)
+    const lk = [nm(L.breaker), nm(L.tc), nm(L.tp)].filter(Boolean).join(' · ')
+    return [(s.device || s.relay_id).slice(0, 28), s.ied ? `61850: ${s.ied}` : 'sem IED 61850', ...(lk ? [lk] : [])]
+  }
+  // IED selecionado: carrega os IEDs do projeto IEC61850 para a associação
+  const selKind = sel?.type === 'el' && sel.ids.length === 1 ? elById.get(sel.ids[0])?.kind : undefined
+  useEffect(() => {
+    if (selKind === 'ied') api.iecProject().then((p) => setIecIeds(p.ieds.map((i) => i.name))).catch(() => setIecIeds([]))
+  }, [selKind])
+  const pickRelay = (elId: number, sid: string) => {
+    const s = sessions.find((x) => x.id === sid)
+    setDg((d) => ({
+      ...d,
+      els: d.els.map((e) => (e.id === elId ? { ...e, sid: sid || undefined, rname: s ? (s.device || s.relay_id) : undefined }
+        : sid && e.kind === 'ied' && e.sid === sid ? { ...e, sid: undefined, rname: undefined } : e)),   // um relé só em um IED
+    }))
+  }
+  const pickIec = (sid: string, ied: string) => api.iecBind(sid, ied || null).then(() => api.sessions().then(setSessions)).catch(() => undefined)
   const setHide = (hide: boolean) => setDg((d) => ({ ...d, els: d.els.map((e) => (selIds.has(e.id) ? { ...e, hide } : e)) }))
 
   return (
-    <div className="sl">
+    <div className="sl" style={{ ['--sl-l' as string]: panels.tools ? '180px' : '34px', ['--sl-r' as string]: panels.side ? '330px' : '34px' }}>
       {/* ---------------------------------------------------------- toolbox */}
-      <aside className="sl-tools">
-        <h3>Elementos</h3>
+      <aside className={`sl-tools ${panels.tools ? '' : 'collapsed'}`}>
+        <button className="sl-collapse" onClick={() => togglePanel('tools')} title={panels.tools ? 'Recolher elementos' : 'Expandir elementos'} aria-expanded={panels.tools}>
+          {panels.tools ? '◀' : '▶'}
+        </button>
+        {!panels.tools && <span className="sl-vlabel">Elementos</span>}
+        {panels.tools && <><h3>Elementos</h3>
         {KIND_ORDER.map((k) => (
           <div
             key={k}
@@ -514,16 +754,25 @@ export function SystemLabApp() {
             <span>{KINDS[k].label}</span>
           </div>
         ))}
-        <p className="hint">
-          Arraste um elemento para a área central. Para ligar, clique em um terminal (●) e depois em outro, ou arraste de um até o outro.
-          Duplo clique em disjuntor/chave abre ou fecha. Arraste no fundo para <b>selecionar vários</b> (Shift/Ctrl+clique soma ou retira; Ctrl+A seleciona tudo) e arraste um deles para mover o grupo.
-          <b>R</b> gira, <b>Delete</b> remove, a roda do mouse dá zoom e a vista se move com o botão do meio/direito (ou Espaço + arrastar).
-        </p>
+        </>}
       </aside>
 
       {/* ---------------------------------------------------------- canvas */}
       <section className="sl-main">
         <div className="sl-bar">
+          <div className="sl-run">
+            {run === 'playing'
+              ? <button className="primary" onClick={pause} title="Pausa o tempo e os relés associados">⏸ Pause</button>
+              : <button className="primary" onClick={play} title="Liga as fontes e executa a simulação">▶ Play</button>}
+            <button onClick={stop} disabled={run === 'stopped'} title="Desliga as fontes e zera o tempo">⏹ Parar</button>
+            <label className="speed">Velocidade
+              <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
+                {[0.5, 1, 2, 5, 10].map((v) => <option key={v} value={v}>{v}×</option>)}
+              </select>
+            </label>
+            <span className="clock" title="Tempo simulado">{simTime(prefs, simT)}</span>
+            <span className={`chip-state ${run === 'playing' ? 'bk-closed' : ''}`}>{run === 'playing' ? 'EM EXECUÇÃO' : run === 'paused' ? 'PAUSADO' : 'PARADO'}</span>
+          </div>
           <button onClick={() => setDg(example())}>Carregar exemplo</button>
           <button onClick={clearAll}>Limpar tudo</button>
           <button onClick={fitView}>Centralizar vista</button>
@@ -555,12 +804,13 @@ export function SystemLabApp() {
               const b = portPos(w.b)
               if (!a || !b) return null
               const on = sol.nodeEnergized.get(`${w.a[0]}:${w.a[1]}`)
+              const commWire = isComm(elById.get(w.a[0])?.kind ?? 'bus') || isComm(elById.get(w.b[0])?.kind ?? 'bus')
               const path = wirePath(a, b, w.via)
               const d = pathD(path)
               const selected = sel?.type === 'wire' && sel.id === w.id
               return (
                 <g key={w.id}>
-                  <path d={d} fill="none" stroke={selected ? 'var(--accent-2)' : on ? 'var(--accent)' : 'var(--muted)'} strokeWidth={selected ? 3 : 2} strokeLinejoin="round" />
+                  <path d={d} fill="none" stroke={selected ? 'var(--accent-2)' : commWire ? 'var(--accent-2)' : on ? 'var(--accent)' : 'var(--muted)'} strokeWidth={selected ? 3 : 2} strokeLinejoin="round" strokeDasharray={commWire ? '6 4' : undefined} />
                   <path
                     d={d} fill="none" stroke="transparent" strokeWidth={12} style={{ cursor: 'grab' }}
                     onPointerDown={(e) => onWireDown(e, w)}
@@ -578,18 +828,18 @@ export function SystemLabApp() {
             {dg.els.map((el) => {
               const r = sol.res.get(el.id)
               const on = el.kind === 'source' || !!r?.energized
-              const color = on ? 'var(--accent)' : 'var(--muted)'
+              const color = isComm(el.kind) ? 'var(--accent-2)' : on ? 'var(--accent)' : 'var(--muted)'
               const dragging = dragIds.includes(el.id)
               const selected = selIds.has(el.id) && !dragging
               const [hx, hy, hw, hh] = hitRect(el)
               const ports = worldPorts(el)
-              const showPorts = !dragging && (el.kind !== 'bus' || wiring != null || selected || hover === el.id)
-              const vertBus = el.kind === 'bus' && el.rot % 2 === 1
-              const lab: [number, number] = el.kind === 'bus'
+              const showPorts = !dragging && (!(isBar(el.kind) || el.kind === 'ied') || wiring != null || selected || hover === el.id)
+              const vertBus = isBar(el.kind) && el.rot % 2 === 1
+              const lab: [number, number] = isBar(el.kind)
                 ? (vertBus ? [el.x + 16, el.y - busCells(el) * 10 - 6] : [el.x, el.y + 26])
-                : [el.x, el.y + (el.kind === 'tp' ? 40 : 40)]
+                : [el.x, el.y + (el.kind === 'ied' ? 46 : el.kind === 'network' ? 60 : 40)]
               const hidden = !!el.hide
-              const lines = showVals && !dragging && !hidden ? valueLines(el, r) : []
+              const lines = showVals && !dragging && !hidden ? (isComm(el.kind) ? commLines(el) : valueLines(el, r)) : []
               return (
                 <g key={el.id} onMouseEnter={() => setHover(el.id)} onMouseLeave={() => setHover((h) => (h === el.id ? null : h))}>
                   <g
@@ -607,10 +857,21 @@ export function SystemLabApp() {
                   ))}
                   {ports.map(([px, py], k) => (
                     <g key={k}>
-                      {showPorts && <circle cx={px} cy={py} r={el.kind === 'bus' ? 2.8 : 3.8} fill="var(--panel)" stroke="var(--accent-2)" strokeWidth={1.5} pointerEvents="none" />}
+                      {showPorts && <circle cx={px} cy={py} r={isBar(el.kind) ? 2.8 : 3.8} fill="var(--panel)" stroke="var(--accent-2)" strokeWidth={1.5} pointerEvents="none" />}
                       <circle cx={px} cy={py} r={9} fill="transparent" data-port={`${el.id}:${k}`} style={{ cursor: 'crosshair' }} onPointerDown={(e) => onPortDown(e, [el.id, k])} />
                     </g>
                   ))}
+                  {isBar(el.kind) && selected && selIds.size === 1 && !dragging && (['lo', 'hi'] as const).map((side) => {
+                    const [hxp, hyp] = side === 'lo' ? ports[0] : ports[ports.length - 1]
+                    const [ux, uy] = rotate(1, 0, el.rot)
+                    const o = side === 'lo' ? -9 : 9
+                    return (
+                      <g key={side} style={{ cursor: vertBus ? 'ns-resize' : 'ew-resize' }} onPointerDown={(e) => onBusEndDown(e, el, side)}>
+                        <title>Arraste para aumentar ou diminuir o barramento</title>
+                        <rect x={hxp + ux * o - 6} y={hyp + uy * o - 6} width={12} height={12} rx={3} fill="var(--accent-2)" stroke="var(--panel)" strokeWidth={1.5} />
+                      </g>
+                    )
+                  })}
                 </g>
               )
             })}
@@ -625,12 +886,15 @@ export function SystemLabApp() {
             {wiringPos && <path d={route(wiringPos, [snap(mouse[0]), snap(mouse[1])])} fill="none" stroke="var(--accent-2)" strokeWidth={2} strokeDasharray="5 4" pointerEvents="none" />}
           </g>
         </svg>
-        {dg.els.length === 0 && <div className="sl-empty">Arraste elementos da barra à esquerda para começar<br /><small>ou use “Carregar exemplo”</small></div>}
+        {dg.els.length === 0 && <div className="sl-empty">Arraste elementos da barra à esquerda para começar<br /><small>ou use “Carregar exemplo” e pressione Play</small></div>}
       </section>
 
       {/* ---------------------------------------------------------- propriedades */}
-      <aside className="sl-side">
-        {selEl ? (
+      <aside className={`sl-side ${panels.side ? '' : 'collapsed'}`}>
+        <button className="sl-collapse" onClick={() => togglePanel('side')} title={panels.side ? 'Recolher propriedades' : 'Expandir propriedades'} aria-expanded={panels.side}>
+          {panels.side ? '▶' : '◀'}
+        </button>
+        {!panels.side ? <span className="sl-vlabel">Propriedades e resultados</span> : selEl ? (
           <>
             <h3>{KINDS[selEl.kind].label}</h3>
             <label className="sl-field">
@@ -643,10 +907,55 @@ export function SystemLabApp() {
                 {f.type === 'bool' ? (
                   <input type="checkbox" checked={flag(selEl, f.key)} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: e.target.checked } }))} />
                 ) : (
-                  <NumInput key={`${selEl.id}-${f.key}`} value={num(selEl, f.key)} onChange={(n) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: f.min != null ? Math.max(f.min, n) : n } }))} />
+                  <NumInput key={`${selEl.id}-${f.key}`} value={num(selEl, f.key)} onChange={(n) => (isBar(selEl.kind) && f.key === 'cells'
+                    ? setDg((g) => resizeBus(g, selEl.id, n, 'hi'))
+                    : updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: f.min != null ? Math.max(f.min, n) : n } })))} />
                 )}
               </label>
             ))}
+            {selEl.kind === 'ied' && (
+              <>
+                <label className="sl-field">
+                  <span>Relé do DigitalRelay</span>
+                  <select className="numinput" value={selEl.sid ?? ''} onChange={(e) => pickRelay(selEl.id, e.target.value)}>
+                    <option value="">— nenhum —</option>
+                    {selEl.sid && !sessions.some((x) => x.id === selEl.sid) && <option value={selEl.sid}>{selEl.rname ?? selEl.sid} (encerrado)</option>}
+                    {sessions.map((x) => <option key={x.id} value={x.id}>{(x.device || x.relay_id).slice(0, 40)}</option>)}
+                  </select>
+                </label>
+                {selEl.sid && sessions.some((x) => x.id === selEl.sid) && (
+                  <label className="sl-field">
+                    <span>IED do projeto IEC61850</span>
+                    <select className="numinput" value={sessions.find((x) => x.id === selEl.sid)?.ied ?? ''} onChange={(e) => pickIec(selEl.sid!, e.target.value)}>
+                      <option value="">— nenhum —</option>
+                      {iecIeds.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </label>
+                )}
+                {selEl.sid && (
+                  <>
+                    {([['breaker', 'Disjuntor monitorado', 'breaker'], ['tc', 'TC (correntes)', 'tc'], ['tp', 'TP (tensões)', 'tp']] as const).map(([key, label, kind]) => (
+                      <label className="sl-field" key={key}>
+                        <span>{label}</span>
+                        <select className="numinput" value={selEl.links?.[key] ?? ''}
+                          onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, links: { ...x.links, [key]: e.target.value === '' ? undefined : Number(e.target.value) } }))}>
+                          <option value="">— nenhum —</option>
+                          {dg.els.filter((x) => x.kind === kind).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                        </select>
+                      </label>
+                    ))}
+                    <p className="hint">O estado do <b>disjuntor</b> segue nos dois sentidos (a abertura pelo relé abre o disjuntor do diagrama). O <b>TC</b> fornece as correntes e o <b>TP</b> as tensões do relé (trifásico equilibrado, valores primários); a injeção analógica do relé é ligada.</p>
+                  </>
+                )}
+                {sessions.length === 0 && <p className="hint">Nenhum relé ativo. Abra o DigitalRelay, carregue um .rdb e crie o relé; ele aparece aqui.</p>}
+                <p className="hint">Ligue o terminal do IED a uma <b>Rede</b>. Só os IEDs ligados à mesma rede trocam mensagens GOOSE.</p>
+              </>
+            )}
+            {selEl.kind === 'network' && (
+              <p className="hint">
+                IEDs nesta rede: <b>{memberCount.get(selEl.id) ?? 0}</b>. Ligue o terminal de cada IED a um dos 8 terminais (●) do círculo. Ao ligar duas Redes entre si, elas se comunicam: os IEDs de cada uma passam a valer também na outra (a contagem inclui as redes ligadas). Relés não ligados à mesma rede não fecham comunicação GOOSE.
+              </p>
+            )}
             <label className="sl-field">
               <span>Ocultar nome e dados no diagrama</span>
               <input type="checkbox" checked={!!selEl.hide} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, hide: e.target.checked }))} />
@@ -694,10 +1003,65 @@ export function SystemLabApp() {
 
 // ------------------------------------------------------------------ painéis
 function Results({ el, r }: { el: El; r: ElResult | undefined }) {
-  if (!r || el.kind === 'switch') return null
+  if (!r || (el.kind === 'switch' && !r.note)) return null
+  if (r.extra.dc) {
+    return (
+      <div className="sl-results">
+        <h4>Resultados</h4>
+        <table className="tbl meas">
+          <tbody>
+            <tr><td>Estado</td><td className="num">Energizado (circuito CC)</td></tr>
+            {r.note && <tr><td>Aviso</td><td className="num">{r.note}</td></tr>}
+            <tr><td>Tensão CC</td><td className="num">{fmt(r.extra.vdc, 0)} V</td></tr>
+            <tr><td>Corrente CC (+ descarga)</td><td className="num">{fmt(r.extra.idc, 1)} A</td></tr>
+            <tr><td>Potência CC</td><td className="num">{fmt(r.extra.pdc, 3)} MW</td></tr>
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+  if (el.kind === 'battery') {
+    const h = r.extra.hours
+    return (
+      <div className="sl-results">
+        <h4>Resultados</h4>
+        <table className="tbl meas">
+          <tbody>
+            <tr><td>Estado</td><td className="num">{r.note}</td></tr>
+            <tr><td>SOC</td><td className="num">{fmt(r.extra.soc, 1)} %</td></tr>
+            <tr><td>Energia armazenada</td><td className="num">{fmt(r.extra.energy, 0)} kWh</td></tr>
+            <tr><td>Potência CC (+ descarga)</td><td className="num">{fmt(r.extra.pdc, 3)} MW</td></tr>
+            <tr><td>Corrente CC</td><td className="num">{fmt(r.extra.idc, 1)} A</td></tr>
+            <tr><td>Tempo até o limite de SOC</td><td className="num">{h < 0 ? '–' : `${fmt(h, 2)} h`}</td></tr>
+          </tbody>
+        </table>
+        <p className="hint">O SOC é um parâmetro (a simulação é de regime permanente, sem evolução no tempo).</p>
+      </div>
+    )
+  }
+  if (el.kind === 'inverter') {
+    return (
+      <div className="sl-results">
+        <h4>Resultados</h4>
+        <table className="tbl meas">
+          <tbody>
+            <tr><td>Estado</td><td className="num">{r.note || '–'}</td></tr>
+            <tr><td>P CA (+ injeta na rede)</td><td className="num">{fmt(r.extra.p, 3)} MW</td></tr>
+            <tr><td>Q CA (+ injeta)</td><td className="num">{fmt(r.extra.q, 3)} Mvar</td></tr>
+            <tr><td>Carregamento</td><td className="num">{fmt(r.extra.loading, 1)} %</td></tr>
+            <tr><td>Potência CC (+ descarga)</td><td className="num">{fmt(r.extra.pdc, 3)} MW</td></tr>
+            <tr><td>Tensão CA</td><td className="num">{ph(r.v[1], 'kV')}</td></tr>
+            <tr><td>Corrente CA</td><td className="num">{ph(r.i[1], 'A', 1)}</td></tr>
+          </tbody>
+        </table>
+        <p className="hint">Com fonte na rede o inversor segue a rede (P/Q constantes, limitados pela potência nominal e pelo SOC). Sem fonte, ele forma a rede (ilhado) e fornece o que a carga consome.</p>
+      </div>
+    )
+  }
   return (
     <div className="sl-results">
       <h4>Resultados</h4>
+      {r.note && (el.kind === 'breaker' || el.kind === 'switch') && <p className="hint warn">⚠ {r.note}. Ajuste "Circuito CC" nas propriedades.</p>}
       {!r.energized && el.kind !== 'source' && <p className="hint warn">Desenergizado (sem caminho fechado até uma fonte).</p>}
       <table className="tbl meas">
         <thead><tr><th>Terminal</th><th>Tensão</th><th>Corrente</th><th>P (MW)</th><th>Q (Mvar)</th></tr></thead>
@@ -744,6 +1108,23 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
                   {rows('bus').map((e) => {
                     const r = sol.res.get(e.id)
                     return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? ph(r.v[0], 'kV') : 'desenergizado'}</td></tr>
+                  })}
+                </tbody>
+              </table>
+            </>
+          )}
+          {rows('inverter').length > 0 && (
+            <>
+              <h4>Armazenamento (BESS)</h4>
+              <table className="tbl meas">
+                <tbody>
+                  {rows('inverter').map((e) => {
+                    const r = sol.res.get(e.id)
+                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? `${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar` : (r?.note ?? 'inativo')}</td></tr>
+                  })}
+                  {rows('battery').map((e) => {
+                    const r = sol.res.get(e.id)
+                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">SOC {fmt(r?.extra.soc ?? num(e, 'soc'), 0)} % · {r?.note}</td></tr>
                   })}
                 </tbody>
               </table>

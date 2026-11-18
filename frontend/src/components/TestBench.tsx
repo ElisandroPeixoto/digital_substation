@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { api } from '../api'
+import { labelOf, type Texts } from '../customTexts'
 import type { PanelData, SessionInfo, SimConfig } from '../types'
 import { injectionUrl } from './InjectionWindow'
+import { BitsCards } from './BitsCards'
 import { MeasurementCard } from './MeasurementCard'
 import { NumField, Pill, Toggle } from './ui'
 
@@ -11,9 +13,10 @@ interface Props {
   sid: string
   info: SessionInfo
   data: PanelData | null
+  texts: Texts
 }
 
-export function TestBench({ sid, info, data }: Props) {
+export function TestBench({ sid, info, data, texts }: Props) {
   const [err, setErr] = useState<string | null>(null)
   if (!data) return <div className="bench muted">Aguardando o simulador…</div>
   const sim = data.sim
@@ -70,13 +73,13 @@ export function TestBench({ sid, info, data }: Props) {
               className={`input-chip ${i.raw ? 'on' : ''} ${Boolean(i.value) !== i.raw ? 'pending' : ''} ${i.breaker && sim.breaker_auto ? 'auto' : ''}`}
               onClick={() => run(api.setInput(sid, i.name, !i.raw))}
               title={
-                `${i.label || i.name}\nClique para alternar` +
+                `${labelOf(texts, i.name, i.label) || i.name}\nClique para alternar` +
                 (i.breaker && sim.breaker_auto ? '\n(modo automático: move o disjuntor)' : '') +
                 (Boolean(i.value) !== i.raw ? '\n(aguardando o filtro de debounce)' : '')
               }
             >
               <b>{i.name}{i.breaker ? ' · 52A' : ''}</b>
-              <small>{i.label || '—'}</small>
+              <small>{labelOf(texts, i.name, i.label) || '—'}</small>
               <Pill on={i.raw} onLabel="ON" offLabel="OFF" />
             </button>
           ))}
@@ -90,15 +93,17 @@ export function TestBench({ sid, info, data }: Props) {
         ) : (
           <div className="inputs outputs">
             {data.outputs.map((o) => (
-              <div key={o.name} className={`output-chip ${o.value ? 'on' : ''}`} title={`${o.name}${o.label ? ' – ' + o.label : ''}${o.role ? ` (bobina de ${o.role})` : ''}`}>
+              <div key={o.name} className={`output-chip ${o.value ? 'on' : ''}`} title={`${o.name}${labelOf(texts, o.name, o.label) ? ' – ' + labelOf(texts, o.name, o.label) : ''}${o.role ? ` (bobina de ${o.role})` : ''}`}>
                 <b>{o.name}{o.role ? <em className="role">{o.role}</em> : null}</b>
-                <small>{o.label || '—'}</small>
+                <small>{labelOf(texts, o.name, o.label) || '—'}</small>
                 <Pill on={o.value} onLabel="ATUADA" offLabel="REPOUSO" />
               </div>
             ))}
           </div>
         )}
       </section>
+
+      {data.bits && <BitsCards sid={sid} bits={data.bits} texts={texts} />}
 
       <section className="card">
         <h3>Auxiliares do relé</h3>

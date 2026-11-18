@@ -115,10 +115,62 @@ Consulta e edição dos arquivos de ajuste da sessão, por classe (`G`, `1…4`,
 Editar um valor e pressionar **Enter** recompila a lógica imediatamente (`OFF` desabilita um pickup). **As alterações valem só para a sessão**: o `.rdb`
 original não é modificado. Os padrões de teste vêm com todos os pickups em `OFF`; para ver a proteção atuar, habilite-os aqui (ex.: `50P1P`, `51P1P`).
 
+### Forçar variáveis lógicas
+
+Na aba **Variáveis internas**, o cartão "Forçar variável lógica" e os botões das tabelas (saídas, latches, SV e SVT, contadores SCnn/SCnnQ, matemáticas) fixam o valor da variável, ignorando a lógica, até ser liberada (clique em "FORÇADO = n ✕"). A lógica a jusante enxerga o valor forçado (`engine.force`/`engine.forced`, aplicado a cada elemento no ciclo). Não é persistente: reiniciar o relé libera tudo.
+
+### Carga de arquivos
+
+A tela inicial segue o padrão do app IEC61850: botão **Adicionar arquivo(s)** (um ou vários `.rdb`, ou arrastar para a tela) e um cartão por arquivo com seus ajustes. "＋ Relé" na barra de relés volta a essa tela para instanciar outro relé.
+
+### Textos
+
+Aba ao lado de "Eventos (SER)" para dar **textos personalizados** a entradas, saídas, bits virtuais (**VB**), remotos (**RB**) e, no SEL-2440, de controle (**CB**). Para cada ponto a tabela mostra
+a descrição vinda dos ajustes (comentário/ALIAS) e um campo para o seu texto; ele **substitui a descrição no Painel frontal** (chips de entradas, saídas e bits, e balões dos LEDs do SEL-2440).
+Vale para o SEL-751 e para o SEL-2440. Os textos ficam só no navegador, **por relé** (`localStorage`, chave `sel751.texts.<relay_id>`) e não alteram a lógica nem o ajuste. Há filtro, "limpar" por linha,
+"Limpar todos" e **Adicionar bit** (inclui um VB/RB/CB que não aparece nos ajustes, ex.: `VB040`, para dar um texto e simulá-lo).
+
 ### Eventos (SER)
 
 Registro sequencial de eventos (Sequential Events Recorder): mudanças dos bits das listas `SER1`–`SER4` do relatório (`set_R`), com texto
 de estado (ALIAS), filtro e botão **Limpar**. Colunas redimensionáveis (igual ao DNP3).
+
+
+## SEL-2440 (DPAC)
+
+Além do SEL-751, o DigitalRelay simula o **SEL-2440** (*Discrete Programmable Automation Controller*): um controlador de entradas/saídas digitais com lógica SELogic, **sem proteções**
+e sem entradas analógicas. O modelo é identificado pelo `RELAYTYPE=SEL-2440` do ajuste (`engine.model == "2440"`); a lógica usa as mesmas variáveis do 751 (SV com PU/DO, latches LT,
+contadores SC, variáveis matemáticas MV, saídas OUT, SER, mapas DNP3).
+
+**Diferenças em relação ao 751**
+
+| | SEL-751 | SEL-2440 |
+|---|---|---|
+| Lógica | classes `L1…L4` (uma por grupo) | classe única **`L`** (32 latches, até 64 SV, 32 SC, 32 MV) |
+| Grupos de ajuste, proteção 50/51/67, religamento, disjuntor, medição | sim | **não** (os ajustes da classe `1` só têm DID/TID) |
+| Entradas | `IN101`, `IN102`, `IN3xx…` | **48 entradas** em 3 cartões de 16: `IN101–IN116`, `IN201–IN216`, `IN301–IN316` (debounce `INxxxD` em ms, na classe `G`) |
+| Saídas | `OUT101…` | `OUT101–OUT116`, `OUT201–OUT216`, `OUT301–OUT316` |
+| Bits de usuário | `RB01–RB32` (pulsos via DNP3), `PBn` | **`VB001–VB256`** (virtuais, recebidos por GOOSE/outros), **`CB001–CB064`** (controle) e **`RB01–RB32`** (remotos) |
+| Frontal | LCD, LEDs de alvo, botões | LEDs `ENABLED/ALARM/MODE`, portas (`LNK/TX/RX`), **3 linhas de 16 LEDs** de E/S (100, 200, 300) e **LAMP TEST** |
+
+**Ciclo (`_step_2440`)**: eventos (pulsos RB, target reset) → entradas com debounce → bits mantidos pelo usuário (VB/CB/RB) → lógica **SV → SC → MV → LT → OUT** → DNP3 → SER.
+Cada equação continua sendo avaliada uma vez por ciclo (sem curto-circuito).
+
+**Tela (aba "Painel frontal")**
+
+- Réplica do frontal (imagem de referência). Cada LED da matriz mostra o estado do ponto: nos cartões de **entrada** é a entrada (clique no LED para alternar), nos de **saída** é a saída;
+  num cartão com entradas e saídas usadas ao mesmo tempo o LED acende se qualquer uma estiver ativa (o balão ao passar o mouse detalha). O tipo do cartão é deduzido de quais pontos aparecem na lógica.
+  **LAMP TEST** (manter pressionado) acende todos os LEDs.
+- **Entradas digitais:** chips com o ALIAS/comentário, clique alterna (com o debounce `INxxxD`); "mostrar não usadas" exibe as 48.
+- **Saídas digitais:** estado (ATUADA/REPOUSO) com o comentário da equação.
+- **Bits virtuais (VB):** simulam os bits que chegariam por GOOSE; clique liga/desliga e o valor fica mantido.
+- **Bits remotos (RB) e de controle (CB):** RB com **Pulso** (1 ciclo), **Set** e **Clear**; CB alterna. Um campo livre aciona qualquer VB/RB/CB (ex.: `VB040`). **Target reset** pulsa `TRGTR`.
+- As demais abas (Variáveis internas, DNP3, Ajustes, Eventos/SER) funcionam como no 751; seções que não se aplicam (disparo, proteção, religamento, direcional, analógicos) ficam ocultas.
+
+**Bits virtuais no SEL-751:** o SEL-751 também ganhou os cartões **Bits virtuais (VB)** e **Bits remotos (RB)** na tela inicial (os usados nos ajustes e os acionados por você): VB liga/desliga e fica mantido; RB tem Pulso/Set/Clear. Os VB entram na lógica como qualquer bit do Relay Word.
+
+**Limitações:** comandos pela rede/serial (`CON`, `SET`…), IEC 61850/GOOSE real, Mirrored Bits (`TMBxx`), Modbus e as portas são lidos mas **não simulados**; os cartões de E/S são deduzidos
+(a configuração real depende do código de pedido do equipamento).
 
 ## Janela de injeção
 

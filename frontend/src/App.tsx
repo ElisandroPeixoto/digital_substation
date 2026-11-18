@@ -7,8 +7,15 @@ import { EventsView } from './components/EventsView'
 import { InjectionWindow } from './components/InjectionWindow'
 import { PhaseEngineApp } from './phaseengine/PhaseEngineApp'
 import { SystemLabApp } from './systemlab/SystemLabApp'
+import { IEC61850App } from './iec61850/IEC61850App'
+import { MBitConfigApp } from './mbitconfig/MBitConfigApp'
+import { OvercurrentApp } from './overcurrent/OvercurrentApp'
 import { PrefsProvider } from './prefs'
 import { ConfigView } from './components/ConfigView'
+import { Panel2440 } from './components/Panel2440'
+import { GooseView } from './components/GooseView'
+import { TextsView } from './components/TextsView'
+import { useCustomTexts } from './customTexts'
 import { RelayFront } from './components/RelayFront'
 import { SettingsView } from './components/SettingsView'
 import { TestBench } from './components/TestBench'
@@ -17,24 +24,26 @@ import { AboutView, EclipseShell, HomeView, type Route } from './eclipse/Eclipse
 import { UploadScreen } from './components/UploadScreen'
 import { VariablesView } from './components/VariablesView'
 
-type Tab = 'panel' | 'vars' | 'dnp' | 'settings' | 'ser'
+type Tab = 'panel' | 'vars' | 'dnp' | 'settings' | 'ser' | 'texts' | 'goose'
 const TABS: [Tab, string][] = [
   ['panel', 'Painel frontal'],
   ['vars', 'Variáveis internas'],
   ['dnp', 'DNP3'],
   ['settings', 'Ajustes'],
   ['ser', 'Eventos (SER)'],
+  ['texts', 'Textos'],
+  ['goose', 'IEC 61850'],
 ]
 const STORAGE = 'sel751.sim'
 
-function loadSaved(): { sid?: string; uid?: string } {
+function loadSaved(): { sid?: string; uid?: string; uids?: string[]; sids?: string[] } {
   try {
     return JSON.parse(localStorage.getItem(STORAGE) ?? '{}')
   } catch {
     return {}
   }
 }
-function save(v: { sid?: string; uid?: string }) {
+function save(v: { sid?: string; uid?: string; uids?: string[]; sids?: string[] }) {
   try {
     localStorage.setItem(STORAGE, JSON.stringify(v))
   } catch {
@@ -43,8 +52,10 @@ function save(v: { sid?: string; uid?: string }) {
 }
 
 function DigitalRelayApp() {
-  const [upload, setUpload] = useState<UploadSummary | null>(null)
+  const [uploads, setUploads] = useState<UploadSummary[]>([])      // arquivos .rdb carregados
   const [info, setInfo] = useState<SessionInfo | null>(null)
+  const [list, setList] = useState<SessionInfo[]>([])      // relés instanciados (várias sessões)
+  const [adding, setAdding] = useState(false)               // próximo carregamento acrescenta um relé
   const [view, setView] = useState<'select' | 'sim'>('select')
   const [tab, setTab] = useState<Tab>('panel')
   const [busy, setBusy] = useState(false)
@@ -54,62 +65,96 @@ function DigitalRelayApp() {
   // Restaura a sessão anterior (o backend mantém a sessão em memória).
   useEffect(() => {
     const saved = loadSaved()
-    if (saved.uid) api.getUpload(saved.uid).then(setUpload).catch(() => undefined)
-    if (saved.sid) {
-      api
-        .getSession(saved.sid)
-        .then((s) => {
-          setInfo(s)
-          setView('sim')
-        })
-        .catch(() => save({ uid: saved.uid }))
-    }
+    const uids = [...new Set([...(saved.uids ?? []), ...(saved.uid ? [saved.uid] : [])])]
+    Promise.all(uids.map((u) => api.getUpload(u).catch(() => null))).then((all) => setUploads(all.filter((x): x is UploadSummary => !!x)))
+    const sids = [...new Set([...(saved.sids ?? []), ...(saved.sid ? [saved.sid] : [])])]
+    Promise.all(sids.map((id) => api.getSession(id).catch(() => null))).then((all) => {
+      const ok = all.filter((x): x is SessionInfo => !!x)
+      setList(ok)
+      const cur = ok.find((x) => x.id === saved.sid) ?? ok[0]
+      if (cur) {
+        setInfo(cur)
+        setView('sim')
+      } else save({ uid: saved.uid })
+    })
   }, [])
 
+  const { texts, setText, clearAll } = useCustomTexts(info?.relay_id)
   const { data: panel, error: panelError } = usePoll(() => api.panel(info!.id), 100, view === 'sim' && !!info, info?.id)
 
   useEffect(() => {
     if (panelError && /Sessão não encontrada/.test(panelError)) {
+      const rest = list.filter((x) => x.id !== info?.id)
+      setList(rest)
+      if (rest.length) { setInfo(rest[0]); return }
       setInfo(null)
       setView('select')
       setError('A sessão do simulador foi encerrada (o backend foi reiniciado?). Carregue o ajuste novamente.')
     }
-  }, [panelError])
+  }, [panelError]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onFile = useCallback(async (file: File) => {
+  const uidsOf = (l: UploadSummary[]) => l.map((u) => u.upload_id)
+  const onFiles = useCallback(async (files: File[]) => {
     setBusy(true)
     setError(null)
     try {
-      const up = await api.upload(file)
-      setUpload(up)
-      save({ uid: up.upload_id, sid: info?.id })
+      let next = uploads
+      for (const f of files) {
+        const up = await api.upload(f)
+        next = [...next.filter((u) => u.upload_id !== up.upload_id), up]
+      }
+      setUploads(next)
+      save({ uid: next[next.length - 1]?.upload_id, uids: uidsOf(next), sid: info?.id, sids: list.map((x) => x.id) })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
-  }, [info])
+  }, [uploads, info, list])
+
+  const onRemoveUpload = (uid: string) => {
+    const next = uploads.filter((u) => u.upload_id !== uid)
+    setUploads(next)
+    save({ uid: next[next.length - 1]?.upload_id, uids: uidsOf(next), sid: info?.id, sids: list.map((x) => x.id) })
+  }
 
   const onLoad = useCallback(
-    async (relay: RelaySummary) => {
-      if (!upload) return
+    async (upload: UploadSummary, relay: RelaySummary) => {
       setBusy(true)
       setError(null)
       try {
         const s = await api.createSession(upload.upload_id, relay.id)
-        if (info) api.deleteSession(info.id).catch(() => undefined)
+        let next = list
+        if (info && !adding) {
+          api.deleteSession(info.id).catch(() => undefined)
+          next = list.filter((x) => x.id !== info.id)
+        }
+        next = [...next, s]
+        setList(next)
+        setAdding(false)
         setInfo(s)
         setView('sim')
         setTab('panel')
-        save({ sid: s.id, uid: upload.upload_id })
+        save({ sid: s.id, uid: upload.upload_id, uids: uidsOf(uploads), sids: next.map((x) => x.id) })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         setBusy(false)
       }
     },
-    [upload, info],
+    [uploads, info, list, adding],
   )
+
+  const select = (s: SessionInfo) => { setInfo(s); setView('sim'); save({ sid: s.id, uid: uploads[uploads.length - 1]?.upload_id, uids: uidsOf(uploads), sids: list.map((x) => x.id) }) }
+  const refreshInfo = () => { if (info) api.getSession(info.id).then((s) => { setInfo(s); setList((l) => l.map((x) => (x.id === s.id ? s : x))) }).catch(() => undefined) }
+  const remove = (s: SessionInfo) => {
+    api.iecBind(s.id, null).catch(() => undefined)
+    api.deleteSession(s.id).catch(() => undefined)
+    const rest = list.filter((x) => x.id !== s.id)
+    setList(rest)
+    save({ sid: rest[0]?.id, uid: uploads[uploads.length - 1]?.upload_id, uids: uidsOf(uploads), sids: rest.map((x) => x.id) })
+    if (info?.id === s.id) { if (rest.length) setInfo(rest[0]); else { setInfo(null); setView('select') } }
+  }
 
   const press = useCallback((n: number, pressed: boolean) => info && api.button(info.id, `PB${n}`, pressed), [info])
   const targetReset = useCallback(() => {
@@ -126,7 +171,7 @@ function DigitalRelayApp() {
         onPlayPause={() => info && api.control(info.id, { running: !(panel?.running ?? true) })}
         onSpeed={(s) => info && api.control(info.id, { speed: s })}
         onRestart={() => info && api.restart(info.id)}
-        onChange={() => { setConfig(false); setView('select') }}
+        onChange={() => { setConfig(false); setAdding(false); setView('select') }}
         onConfig={() => setConfig((c) => !c)}
         configOpen={config}
       />
@@ -134,31 +179,45 @@ function DigitalRelayApp() {
         <ConfigView onClose={() => setConfig(false)} />
       ) : view === 'select' || !info ? (
         <UploadScreen
-          upload={upload}
+          uploads={uploads}
           busy={busy}
           error={error}
-          onFile={onFile}
+          onFiles={onFiles}
           onLoad={onLoad}
+          onRemove={onRemoveUpload}
           canReturn={!!info}
           onReturn={() => setView('sim')}
         />
       ) : (
         <main>
+          <div className="inst-bar">
+            {list.map((s) => (
+              <span key={s.id}>
+                <button className={`chip-btn ${s.id === info.id ? 'active' : ''}`} onClick={() => select(s)} title={s.device}>
+                  {(s.relay_id || s.device).slice(0, 34)}{s.ied ? ` · ${s.ied}` : ''}
+                </button>
+                <button className="link" onClick={() => remove(s)} title="Encerrar este relé" aria-label="Encerrar relé">×</button>
+              </span>
+            ))}
+            <button className="chip-btn" onClick={() => { setAdding(true); setView('select') }} disabled={list.length >= 8} title="Instancia outro relé (até 8)">＋ Relé</button>
+          </div>
           <nav className="tabs">
             {TABS.map(([k, l]) => (
               <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>
             ))}
           </nav>
-          {tab === 'panel' && (
+          {tab === 'panel' && (info.model === '2440' ? <Panel2440 sid={info.id} data={panel} texts={texts} /> : (
             <div className="panel-tab">
               <RelayFront info={info} panel={panel} onPb={press} onTargetReset={targetReset} />
-              <TestBench sid={info.id} info={info} data={panel} />
+              <TestBench sid={info.id} info={info} data={panel} texts={texts} />
             </div>
-          )}
-          {tab === 'vars' && <VariablesView sid={info.id} />}
+          ))}
+          {tab === 'vars' && <VariablesView sid={info.id} model={info.model} />}
           {tab === 'dnp' && <DnpView sid={info.id} />}
           {tab === 'settings' && <SettingsView sid={info.id} info={info} activeGroup={panel?.status.group ?? 1} />}
           {tab === 'ser' && <EventsView sid={info.id} />}
+          {tab === 'goose' && <GooseView info={info} onChanged={refreshInfo} />}
+          {tab === 'texts' && <TextsView sid={info.id} data={panel} texts={texts} setText={setText} clearAll={clearAll} />}
         </main>
       )}
     </div>
@@ -180,13 +239,16 @@ export default function App() {
   const hash = useHash()
   const m = hash.match(/^#\/injecao\/([A-Za-z0-9]+)/)
   if (m) return <InjectionWindow sid={m[1]} />
-  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/systemlab') ? 'systemlab' : hash.startsWith('#/about') ? 'about' : 'home'
+  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/systemlab') ? 'systemlab' : hash.startsWith('#/overcurrent') ? 'overcurrent' : hash.startsWith('#/iec61850') ? 'iec61850' : hash.startsWith('#/mbitconfig') ? 'mbitconfig' : hash.startsWith('#/about') ? 'about' : 'home'
   return (
     <EclipseShell route={route}>
       {route === 'home' && <HomeView />}
       {route === 'about' && <AboutView />}
       {route === 'phaseengine' && <PhaseEngineApp />}
-      {route === 'systemlab' && <SystemLabApp />}
+      {route === 'systemlab' && <PrefsProvider><SystemLabApp /></PrefsProvider>}
+      {route === 'overcurrent' && <OvercurrentApp />}
+      {route === 'iec61850' && <IEC61850App />}
+      {route === 'mbitconfig' && <MBitConfigApp />}
       {route === 'digitalrelay' && <PrefsProvider><DigitalRelayApp /></PrefsProvider>}
     </EclipseShell>
   )
