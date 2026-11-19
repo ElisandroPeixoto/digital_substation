@@ -90,14 +90,14 @@ class FieldSim:
         self.breaker = Breaker()
 
     # ------------------------------------------------------------ fasores
-    def phasors(self):
-        """Retorna (I, V) como dicts de complexos em valores primários.
+    def phasors(self, ignore_switch: bool = False):
+        """Retorna (I, V) como dicts de complexos em valores primários. `ignore_switch`: ignora a chave de injeção (valores ajustados, só para exibição).
 
         Base = fasores injetados pelo usuário. Uma falta ativa (com o disjuntor fechado) substitui
         as correntes das fases envolvidas e afunda as tensões. Disjuntor aberto = corrente zero.
         """
         cfg = self.cfg
-        if not cfg.analog_on:
+        if not cfg.analog_on and not ignore_switch:
             return {ph: 0j for ph in "ABC"}, {ph: 0j for ph in "ABC"}
         faulted = self.breaker.closed and cfg.fault_type in _FAULT_PHASORS
         sag = _SAG.get(cfg.fault_type or "", {}) if faulted else {}

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import cmath
+import math
 import contextlib
 import re
 import uuid
@@ -15,7 +17,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .fieldsim import FAULT_TYPES, PRESETS
+from .fieldsim import A_OP, A_OP2, FAULT_TYPES, PRESETS
 from .rdb import RdbArchive, parse_rdb
 from .scl import parse_scl
 from .selogic import split_comment
@@ -217,6 +219,25 @@ async def control(sid: str, body: ControlBody) -> dict:
 
 
 # ----------------------------------------------------------------- painel
+def _configured_meter(eng, base: dict) -> dict:
+    """Injeção desligada: o relé enxerga zero, mas a tela mostra os valores ajustados (só exibição; a lógica não os usa)."""
+    I, V = eng.field.phasors(ignore_switch=True)
+    m = dict(base)
+    resid = I["A"] + I["B"] + I["C"]
+    ang = lambda c: math.degrees(cmath.phase(c)) if abs(c) > 1e-9 else 0.0
+    for p in "ABC":
+        m[f"I{p}_MAG"], m[f"I{p}_ANG"] = abs(I[p]), ang(I[p])
+        m[f"V{p}_MAG"], m[f"V{p}_ANG"] = abs(V[p]), ang(V[p])
+    m["IG_MAG"] = abs(resid)
+    for nm, c in (("VAB", V["A"] - V["B"]), ("VBC", V["B"] - V["C"]), ("VCA", V["C"] - V["A"])):
+        m[f"{nm}_MAG"], m[f"{nm}_ANG"] = abs(c), ang(c)
+    m["3I2"] = abs(I["A"] + A_OP2 * I["B"] + A_OP * I["C"])
+    s = sum(V[p] * I[p].conjugate() for p in "ABC")
+    m["P"], m["Q"], m["S"] = s.real / 1000.0, s.imag / 1000.0, abs(s) / 1000.0
+    m["PF"] = m["P"] / m["S"] if m["S"] > 1e-6 else 1.0
+    return {k: round(x, 3) for k, x in m.items()}
+
+
 @app.get("/api/sessions/{sid}/panel")
 async def get_panel(sid: str) -> dict:
     s = _session(sid)
@@ -228,6 +249,8 @@ async def get_panel(sid: str) -> dict:
         "VA_MAG", "VB_MAG", "VC_MAG", "VA_ANG", "VB_ANG", "VC_ANG",
         "VAB_MAG", "VBC_MAG", "VCA_MAG", "VAB_ANG", "VBC_ANG", "VCA_ANG",
         "FREQ", "P", "Q", "S", "PF", "3I2", "VDC")}
+    if not eng.field.cfg.analog_on:
+        meter = _configured_meter(eng, meter)
     return {
         "model": eng.model, "io": eng.snapshot_io() if eng.model == "2440" else None,
         "bits": eng.snapshot_bits(),

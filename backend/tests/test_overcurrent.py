@@ -340,3 +340,14 @@ def test_analog_off_waits_for_breaker_to_open_on_trip_coil():
     for _ in range(int(0.1 / 0.004)):             # o disjuntor abre e só então a injeção é cortada
         eng.step(0.004)
     assert not eng.field.breaker.closed and not eng.field.cfg.analog_on
+
+
+def test_panel_meter_shows_configured_values_when_injection_off():
+    from app.main import _configured_meter
+    eng = make()
+    load(eng, 300.0)
+    eng.field.cfg.analog_on = False
+    run(eng, 0.05)
+    assert eng.vals["IA_MAG"] == 0.0                                     # o relé enxerga zero
+    m = _configured_meter(eng, {})
+    assert m["IA_MAG"] == pytest.approx(300.0, abs=0.01)                 # a tela mostra o ajustado

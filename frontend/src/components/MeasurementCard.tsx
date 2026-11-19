@@ -61,7 +61,7 @@ export function MeasurementCard({ sid, data, info, onOpenInjection }: { sid: str
           })}
         </div>
       )}
-      {!data.sim.analog_on && <p className="hint warn">Injeção desligada: o relé enxerga corrente, tensão e potência zero.</p>}
+      {!data.sim.analog_on && <p className="hint warn">Injeção desligada: os valores abaixo são os ajustados na janela de injeção, mas o relé enxerga corrente, tensão e potência zero.</p>}
       {fault && <p className="hint warn">Falta ativa ({fault}): as correntes mostradas já incluem a falta.</p>}
       <table className="tbl meas">
         <thead>
