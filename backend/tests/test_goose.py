@@ -222,20 +222,53 @@ def test_vlan_aware_flag():
     assert r.sub.vals["VB001"] == 1.0                                       # VLAN desconsiderada
 
 
-def test_topology_networks_isolate_relays():
+def test_forced_variable_is_published_and_changes_subscriber_vb():
     r = Rig()
+    r.run(0.6)
+    assert r.sub.vals["VB001"] == 0.0
+    r.pub.force("SV01T", 1)                        # variável forçada no publicador (membro do dataset)
+    r.run(0.6)
+    assert r.sub.vals["VB001"] == 1.0              # o assinante enxerga a mudança
+    r.pub.force("SV01T", 0)
+    r.run(0.6)
+    assert r.sub.vals["VB001"] == 0.0
+    r.pub.force("SV01T", 1)
+    r.run(0.3)
+    r.pub.force("SV01T", None)                     # liberar: volta ao valor da lógica (IN201 = 0)
+    r.run(0.6)
+    assert r.sub.vals["VB001"] == 0.0
+
+
+
+def test_quality_attribute_ignored_and_message_quality_is_status():
+    scl = SCL.decode().replace(
+        '<FCDA ldInst="CFG" prefix="LT" lnClass="GGIO" lnInst="1" doName="Ind02" daName="stVal" fc="ST"/>',
+        '<FCDA ldInst="CFG" prefix="SVT" lnClass="GGIO" lnInst="1" doName="Ind01" daName="q" fc="ST"/>'
+        '<FCDA ldInst="CFG" prefix="LT" lnClass="GGIO" lnInst="1" doName="Ind02" daName="stVal" fc="ST"/>').replace(
+        '<sel:GooseRxEntry tdlString="(VB001)Bool"/><sel:GooseRxEntry tdlString="Bool"/>',
+        '<sel:GooseRxEntry tdlString="(VB001)Bool"/><sel:GooseRxEntry tdlString="(VB005)Quality"/><sel:GooseRxEntry tdlString="Bool"/>'
+        '<sel:GooseRxEntry tdlString="(VB002)PUB/CFG/GOOSE - message quality"/>').replace(' pubRxStatus="VB009"', "")
+    ieds = parse_scl(scl.encode(), "q.scd")
+    sub = next(i for i in ieds if i.name == "SUB").subs[0]
+    assert sub.status_vb == "VB002" and len(sub.entries) == 3          # "message quality" vira o status da comunicação
+    pub = next(i for i in ieds if i.name == "PUB")
+    assert [f.bit for f in pub.gcbs[0].entries] == ["SV01T", "", "LT02"]   # o .q não vira bit
+    r = Rig()
+    r.net.project.clear()
+    r.net.project.add(ieds, "q.scd")
+    r.net.bind("p", "PUB"); r.net.bind("s", "SUB")
     r.pub.set_input("IN201", True)
-    r.net.networks = [{"id": "R1", "name": "Rede 1", "sids": ["p", "s"]}]
-    r.run(0.6)
-    assert r.sub.vals["VB001"] == 1.0                                       # mesma rede
-    r.net.networks = [{"id": "R1", "name": "A", "sids": ["p"]}, {"id": "R2", "name": "B", "sids": ["s"]}]
-    r.run(1.5)
-    assert r.sub.vals["VB001"] == 0.0 and r.sub.vals["VB009"] == 1.0         # redes diferentes
-    st = next(i for i in r.net.status(r.sess)["ieds"] if i["name"] == "SUB")["subs"][0]
-    assert "outra rede" in st["reason"]
-    r.net.networks = [{"id": "R1", "name": "A", "sids": ["p"]}]             # assinante fora de qualquer rede
-    r.run(0.2)
-    assert not r.net.ied_state(r.net.project.ieds["SUB"], r.sess)[0]
-    r.net.networks = None                                                  # sem topologia: tudo interligado
-    r.run(0.6)
+    r.sub.vals.setdefault("VB005", 0.0)
+    r.run(0.8)
     assert r.sub.vals["VB001"] == 1.0
+    assert r.sub.vals["VB002"] == 0.0                                    # comunicação ok
+    assert "VB005" not in r.sub.ext_bits                                 # .q não escreve VB
+    r.net.cut.add("PUB")
+    r.run(2.0)
+    assert r.sub.vals["VB002"] == 1.0                                    # comunicação falhou
+
+
+def test_sel_vb_token_with_dollar_suffix():
+    scl = SCL.decode().replace('(VB001)Bool', '(VB001$r0)Bool').replace('<sel:GooseRxEntry tdlString="Bool"/>', '<sel:GooseRxEntry tdlString="(r0$o0x1807)BVstring13"/>')
+    sub = next(i for i in parse_scl(scl.encode(), "d.scd") if i.name == "SUB").subs[0]
+    assert [e.vb for e in sub.entries] == ["VB001", "r0$o0x1807"]

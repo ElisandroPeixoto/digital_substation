@@ -53,23 +53,6 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
       )
     case 'bus':
       return <line x1={-cells * 10} y1={0} x2={cells * 10} y2={0} stroke={color} strokeWidth={6} strokeLinecap="round" />
-    case 'network':
-      // hub circular com 8 raios; cada extremidade (círculo) é um terminal para ligar os relés
-      return (
-        <g stroke={color} fill="none" strokeWidth={3} strokeLinecap="round">
-          <circle cx={0} cy={0} r={14} />
-          {Array.from({ length: 8 }, (_, k) => {
-            const c = Math.cos((k * Math.PI) / 4)
-            const sn = Math.sin((k * Math.PI) / 4)
-            return (
-              <g key={k}>
-                <line x1={14 * c} y1={14 * sn} x2={32 * c} y2={32 * sn} />
-                <circle cx={38 * c} cy={38 * sn} r={5} fill="var(--panel)" />
-              </g>
-            )
-          })}
-        </g>
-      )
     case 'ied':
       // frontal de relé: corpo azul, display e dois botões (sem nome do modelo)
       return (

@@ -339,7 +339,7 @@ export interface IecIedStatus {
   subs: { pub_ied: string; cb_name: string; valid: boolean; reason: string; st_num: number; sq_num: number; rx_count: number; values: number[]; status_vb: string }[]
 }
 export interface IecStatus {
-  bindings: Record<string, string>; vlan_aware: boolean; topology: { id: string; name: string; sids: string[] }[] | null; latency_ms: number; loss_pct: number; status_on_loss: boolean; sent: number; lost: number
+  bindings: Record<string, string>; vlan_aware: boolean; latency_ms: number; loss_pct: number; status_on_loss: boolean; sent: number; lost: number
   ieds: IecIedStatus[]
 }
 export interface SessionBrief { id: string; model: string; relay_id: string; device: string; filename: string; running: boolean; ied: string | null; breaker_closed: boolean | null }

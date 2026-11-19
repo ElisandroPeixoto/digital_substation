@@ -196,7 +196,7 @@ desenergizados; abrindo o da fonte, tudo a jusante fica desenergizado.
 
 O header mostra o **nome do app atual** ao lado do logo e o menu suspenso **Apps â–¾** para trocar de mÃ³dulo sem voltar Ã  Home (`frontend/src/eclipse/EclipseShell.tsx`, lista vinda de `apps.ts`).
 
-## IED e Rede (comunicaÃ§Ã£o GOOSE)
+## IED (comunicação GOOSE)
 
 Dois elementos da barra esquerda nÃ£o tÃªm efeito elÃ©trico (o solver os ignora) e servem Ã  simulaÃ§Ã£o de GOOSE entre relÃ©s do DigitalRelay:
 
@@ -205,10 +205,8 @@ Dois elementos da barra esquerda nÃ£o tÃªm efeito elÃ©trico (o solver os i
   - **TC (correntes):** a corrente do TC no sistema simulado (valor primÃ¡rio, trifÃ¡sico equilibrado, com o Ã¢ngulo do solver) Ã© injetada como IA/IB/IC do relÃ©. Sem energia, zero.
   - **TP (tensÃµes):** a tensÃ£o do TP (fase-fase Ã· âˆš3, valor primÃ¡rio) Ã© injetada como VA/VB/VC. A injeÃ§Ã£o analÃ³gica do relÃ© Ã© ligada.
   O envio Ã© feito ao mudar o diagrama e repetido a cada ~5 s; enquanto houver associaÃ§Ã£o, ele prevalece sobre valores digitados na janela de injeÃ§Ã£o.
-- **Rede:** cÃ­rculo com 8 raios; cada extremidade (â—) Ã© um terminal. Ligue o terminal de cada IED a um deles. Redes ligadas entre si formam uma sÃ³.
 
-**Regra:** com ao menos um IED/Rede no diagrama, os relÃ©s **sÃ³ se comunicam por GOOSE dentro da mesma rede**. RelÃ© em redes diferentes, ou nÃ£o ligado a nenhuma rede, nÃ£o fecha comunicaÃ§Ã£o (o motivo aparece no estado do IED no app IEC61850 e na aba "IEC 61850" do DigitalRelay). Sem nenhum IED/Rede no diagrama, vale o comportamento anterior (todos interligados). O SystemLab envia as redes ao backend (`POST /api/iec61850/topology`) a cada mudanÃ§a; a topologia fica na memÃ³ria do backend atÃ© ser trocada ou atÃ© ele reiniciar (abrir o SystemLab de novo reenvia).
-
+**Regra:** não há elemento de rede. Dois IEDs do diagrama associados a relés do **mesmo projeto IEC61850** (app IEC61850, aba "Simulação") se comunicam por GOOSE automaticamente; o que decide é o vínculo relé ↔ IED do projeto, os ajustes (E61850/EGSE, assinaturas) e as condições de falha (latência, perda, cabo) do app IEC61850.
 
 ## Bateria e Inversor (BESS)
 

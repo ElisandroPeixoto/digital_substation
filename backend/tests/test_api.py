@@ -95,3 +95,16 @@ def test_fault_through_api_trips_breaker(client, session):
 
 def test_unknown_session(client):
     assert client.get("/api/sessions/naoexiste/panel").status_code == 404
+
+
+def test_vb_locked_when_relay_bound_to_iec_ied(client, session):
+    sid = session["info"]["id"]
+    from app.main import manager
+    assert client.post(f"/api/sessions/{sid}/bits", json={"name": "VB001", "mode": "set"}).status_code in (200, 400)
+    manager.net.bindings[sid] = "IED_X"
+    try:
+        r = client.post(f"/api/sessions/{sid}/bits", json={"name": "VB001", "mode": "set"})
+        assert r.status_code == 409 and "IEC61850" in r.json()["detail"]
+        assert client.post(f"/api/sessions/{sid}/force", json={"name": "VB001", "value": 1}).status_code == 409
+    finally:
+        manager.net.bindings.pop(sid, None)

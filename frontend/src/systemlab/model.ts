@@ -1,6 +1,6 @@
 /** Modelo do diagrama unifilar do SystemLab (elementos, conexões, geometria dos terminais). */
 
-export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc' | 'ied' | 'network' | 'battery' | 'inverter'
+export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc' | 'ied' | 'battery' | 'inverter'
 export type Params = Record<string, number | boolean>
 
 export interface El {
@@ -22,13 +22,9 @@ export interface El {
 }
 
 /** Elementos de comunicação (não participam do cálculo elétrico). */
-export const isComm = (k: Kind): boolean => k === 'ied' || k === 'network'
+export const isComm = (k: Kind): boolean => k === 'ied'
 /** Elementos desenhados como barra com terminais a cada célula. */
 export const isBar = (k: Kind): boolean => k === 'bus'
-
-/** Terminais da Rede: extremidades dos 8 raios (raio de 38 px). */
-export const NET_PORTS = 8
-export const NET_R = 38
 
 /** Conexão entre dois terminais: [id do elemento, índice do terminal]. */
 export type PortRef = [number, number]
@@ -161,12 +157,6 @@ export const KINDS: Record<Kind, KindInfo> = {
     defaults: {},
     fields: [],
   },
-  network: {
-    label: 'Rede',
-    prefix: 'RD',
-    defaults: {},
-    fields: [],
-  },
   tc: {
     label: 'TC',
     prefix: 'TC',
@@ -178,7 +168,7 @@ export const KINDS: Record<Kind, KindInfo> = {
   },
 }
 
-export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'load', 'battery', 'inverter', 'tp', 'tc', 'ied', 'network']
+export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'load', 'battery', 'inverter', 'tp', 'tc', 'ied']
 
 export function num(el: El, key: string): number {
   const v = el.p[key]
@@ -192,10 +182,9 @@ export function localPorts(el: El): [number, number][] {
     case 'source': return [[40, 0]]
     case 'load': return [[-40, 0]]
     case 'tp': return [[0, -40]]
-    case 'ied': return [[0, 30]]
+    case 'ied': return []                          // sem terminais: relés do mesmo projeto IEC61850 se comunicam
     case 'battery': return [[40, 0]]              // terminal CC
     case 'inverter': return [[-40, 0], [40, 0]]   // 0 = CC (bateria), 1 = CA (rede)
-    case 'network': return Array.from({ length: NET_PORTS }, (_, k) => [Math.round(NET_R * Math.cos((k * Math.PI) / 4) * 100) / 100, Math.round(NET_R * Math.sin((k * Math.PI) / 4) * 100) / 100] as [number, number])
     case 'bus': {
       const n = busCells(el)
       return Array.from({ length: n + 1 }, (_, i) => [(i - n / 2) * GRID, 0] as [number, number])
@@ -236,7 +225,6 @@ export function hitRect(el: El): [number, number, number, number] {
     case 'switch': return [-40, -16, 80, 32]
     case 'transformer': return [-32, -22, 64, 44]
     case 'bus': { const h = busCells(el) * 10; return [-h - 6, -9, 2 * h + 12, 18] }
-    case 'network': return [-46, -46, 92, 92]
     case 'battery': return [-40, -24, 80, 48]
     case 'inverter': return [-40, -24, 80, 48]
     case 'ied': return [-28, -36, 56, 72]

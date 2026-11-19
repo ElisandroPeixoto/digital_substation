@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api'
+import { usePoll } from '../hooks'
 import { labelOf, type Texts } from '../customTexts'
 import type { IoBit, IoBits } from '../types'
 import { Pill } from './ui'
@@ -8,10 +9,10 @@ type Mode = 'set' | 'clear' | 'toggle' | 'pulse'
 
 /** Chip de bit (VB/CB). Fica FORA dos painéis: definido dentro, o React o recriaria a cada atualização (10 Hz)
  *  e o clique que cai entre duas atualizações se perderia. */
-function BitChip({ b, texts, onToggle }: { b: IoBit; texts: Texts; onToggle: () => void }) {
+function BitChip({ b, texts, onToggle, locked }: { b: IoBit; texts: Texts; onToggle: () => void; locked?: boolean }) {
   const label = labelOf(texts, b.name, b.label)
   return (
-    <button className={`input-chip ${b.on ? 'on' : ''}`} onClick={onToggle}
+    <button className={`input-chip ${b.on ? 'on' : ''}`} onClick={onToggle} disabled={locked}
       title={`${b.name}${label ? ' – ' + label : ''}${texts[b.name] && b.label ? `\n(ajuste: ${b.label})` : ''}\nClique para alternar${b.held == null ? ' (estado vindo da lógica/pulso)' : ''}`}>
       <b>{b.name}</b>
       <small>{label || '—'}</small>
@@ -34,17 +35,21 @@ export function BitsCards({ sid, bits, texts, showCb = false }: Props) {
   const [custom, setCustom] = useState('')
   const run = (p: Promise<unknown>) => p.then(() => setErr(null)).catch((e) => setErr(String(e.message ?? e)))
   const bit = (name: string, mode: Mode) => run(api.bit(sid, name, mode))
-  const validName = /^(VB\d{3}|CB\d{3}|RB\d{2})$/.test(custom)
+  const ied = usePoll(() => api.sessions(), 2500, true, sid).data?.find((x) => x.id === sid)?.ied ?? null
+  const locked = !!ied            // relé associado a um IED do app IEC61850: os VBs pertencem ao GOOSE
+  const validName = /^(VB\d{3}|CB\d{3}|RB\d{2})$/.test(custom) && !(locked && custom.startsWith('VB'))
 
   return (
     <>
       {err && <div className="alert">{err}</div>}
       <section className="card">
         <h3>Bits virtuais (VB)</h3>
-        <p className="hint">Simulam os bits recebidos por GOOSE/outros dispositivos. Clique para ligar/desligar (ficam mantidos).</p>
+        {locked
+          ? <div className="alert">Não é possível forçar os bits virtuais: este relé está associado ao IED <b>{ied}</b> e seus VBs são usados no app IEC61850 do simulador (recebem os valores do GOOSE). Para forçá-los, desassocie o relé na aba "IEC 61850".</div>
+          : <p className="hint">Simulam os bits recebidos por GOOSE/outros dispositivos. Clique para ligar/desligar (ficam mantidos).</p>}
         {bits.vb.length === 0
           ? <p className="hint">Nenhum VB usado nos ajustes. Use o campo abaixo para acionar qualquer VB.</p>
-          : <div className="inputs">{bits.vb.map((b) => <BitChip key={b.name} b={b} texts={texts} onToggle={() => bit(b.name, 'toggle')} />)}</div>}
+          : <div className="inputs">{bits.vb.map((b) => <BitChip key={b.name} b={b} texts={texts} locked={locked} onToggle={() => bit(b.name, 'toggle')} />)}</div>}
       </section>
 
       <section className="card">

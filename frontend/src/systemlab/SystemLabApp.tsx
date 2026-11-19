@@ -67,33 +67,6 @@ function resizeBus(d0: Diagram, id: number, n1raw: number, side: 'lo' | 'hi'): D
   return { ...d0, els, wires }
 }
 
-/** Redes de comunicação do diagrama: Redes ligadas entre si formam uma só; cada IED ligado a ela entra com o relé associado. */
-function computeNetworks(dg: Diagram): { id: string; name: string; sids: string[] }[] | null {
-  if (!dg.els.some((e) => isComm(e.kind))) return null
-  const nets = dg.els.filter((e) => e.kind === 'network')
-  const parent = new Map<number, number>(nets.map((n) => [n.id, n.id]))
-  const find = (x: number): number => { while (parent.get(x) !== x) x = parent.get(x)!; return x }
-  const byId = new Map(dg.els.map((e) => [e.id, e]))
-  for (const w of dg.wires) {
-    const a = byId.get(w.a[0])
-    const b = byId.get(w.b[0])
-    if (a?.kind === 'network' && b?.kind === 'network') parent.set(find(a.id), find(b.id))
-  }
-  const groups = new Map<number, { names: string[]; sids: Set<string> }>()
-  for (const n of nets) {
-    const g = groups.get(find(n.id)) ?? { names: [], sids: new Set<string>() }
-    g.names.push(n.name)
-    groups.set(find(n.id), g)
-  }
-  for (const w of dg.wires) {
-    const a = byId.get(w.a[0])
-    const b = byId.get(w.b[0])
-    const [net, ied] = a?.kind === 'network' && b?.kind === 'ied' ? [a, b] : b?.kind === 'network' && a?.kind === 'ied' ? [b, a] : [undefined, undefined]
-    if (net && ied?.sid) groups.get(find(net.id))?.sids.add(ied.sid)
-  }
-  return [...groups.values()].map((g) => ({ id: g.names.join('+'), name: g.names.join(' + '), sids: [...g.sids] }))
-}
-
 function emptyDiagram(): Diagram {
   return { els: [], wires: [], nextId: 1 }
 }
@@ -101,7 +74,11 @@ function emptyDiagram(): Diagram {
 function load(): Diagram {
   try {
     const d = JSON.parse(localStorage.getItem(KEY) ?? 'null')
-    if (d && Array.isArray(d.els) && Array.isArray(d.wires) && typeof d.nextId === 'number') return d
+    if (d && Array.isArray(d.els) && Array.isArray(d.wires) && typeof d.nextId === 'number') {
+      const gone = new Set<number>(d.els.filter((e: { kind: string }) => e.kind === 'network').map((e: { id: number }) => e.id))   // elemento Rede removido
+      if (gone.size === 0) return d
+      return { ...d, els: d.els.filter((e: { id: number }) => !gone.has(e.id)), wires: d.wires.filter((w: Diagram['wires'][number]) => !gone.has(w.a[0]) && !gone.has(w.b[0])) }
+    }
   } catch { /* ignora */ }
   return emptyDiagram()
 }
@@ -190,8 +167,7 @@ const ph = (p: Ph | undefined, unit: string, d = 2) => (p ? `${fmt(p.mag, d)} ${
 function valueLines(el: El, r: ElResult | undefined): string[] {
   if (!r) return []
   switch (el.kind) {
-    case 'ied':
-    case 'network': return []
+    case 'ied': return []
     case 'battery': return [`SOC ${fmt(r.extra.soc, 0)}% · ${fmt(r.extra.pdc)} MW`, r.note ?? '']
     case 'inverter': return [r.energized ? `${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar` : (r.note ?? 'inativo'), ...(r.energized && r.note ? [r.note] : [])]
     case 'bus': return [r.energized ? ph(r.v[0], 'kV') : 'desenergizado']
@@ -304,14 +280,6 @@ export function SystemLabApp() {
     return () => { on = false; clearInterval(t) }
   }, [])
 
-  // redes de comunicação: enviadas ao backend, que só deixa os relés se falarem por GOOSE dentro da mesma rede
-  const topo = useMemo(() => computeNetworks(dg), [dg])
-  const topoKey = JSON.stringify(topo)
-  useEffect(() => {
-    const t = setTimeout(() => { api.iecTopology(topo).catch(() => undefined) }, 300)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topoKey])
   // associação IED ↔ disjuntor/TC/TP: estado do disjuntor nos dois sentidos; correntes (TC) e tensões (TP) injetadas no relé
   const syncRef = useRef(new Map<number, { rel?: boolean; diag?: boolean; hold: number; sent: string; t: number }>())
   useEffect(() => {
@@ -359,28 +327,6 @@ export function SystemLabApp() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, dg, sol])
-  // IEDs por Rede: Redes ligadas entre si formam um grupo, e os IEDs de cada uma contam para todas
-  const memberCount = useMemo(() => {
-    const byId = new Map(dg.els.map((e) => [e.id, e]))
-    const parent = new Map<number, number>(dg.els.filter((e) => e.kind === 'network').map((e) => [e.id, e.id]))
-    const find = (x: number): number => { while (parent.get(x) !== x) x = parent.get(x)!; return x }
-    for (const w of dg.wires) {
-      const a = byId.get(w.a[0])
-      const b = byId.get(w.b[0])
-      if (a?.kind === 'network' && b?.kind === 'network') parent.set(find(a.id), find(b.id))
-    }
-    const ieds = new Map<number, Set<number>>()
-    for (const w of dg.wires) {
-      const a = byId.get(w.a[0])
-      const b = byId.get(w.b[0])
-      const [net, ied] = a?.kind === 'network' && b?.kind === 'ied' ? [a, b] : b?.kind === 'network' && a?.kind === 'ied' ? [b, a] : [undefined, undefined]
-      if (net && ied) ieds.set(find(net.id), (ieds.get(find(net.id)) ?? new Set()).add(ied.id))
-    }
-    const m = new Map<number, number>()
-    for (const e of dg.els) if (e.kind === 'network') m.set(e.id, ieds.get(find(e.id))?.size ?? 0)
-    return m
-  }, [dg])
-
   const toWorld = useCallback((cx: number, cy: number): [number, number] => {
     const r = svgRef.current!.getBoundingClientRect()
     const v = viewRef.current
@@ -703,7 +649,6 @@ export function SystemLabApp() {
 
   const wiringPos = wiring ? portPos(wiring) : null
   const commLines = (el: El): string[] => {
-    if (el.kind === 'network') return [`${memberCount.get(el.id) ?? 0} IED(s) na rede`]
     const s = sessions.find((x) => x.id === el.sid)
     if (!el.sid) return ['sem relé associado']
     if (!s) return ['relé encerrado']
@@ -837,7 +782,7 @@ export function SystemLabApp() {
               const vertBus = isBar(el.kind) && el.rot % 2 === 1
               const lab: [number, number] = isBar(el.kind)
                 ? (vertBus ? [el.x + 16, el.y - busCells(el) * 10 - 6] : [el.x, el.y + 26])
-                : [el.x, el.y + (el.kind === 'ied' ? 46 : el.kind === 'network' ? 60 : 40)]
+                : [el.x, el.y + (el.kind === 'ied' ? 46 : 40)]
               const hidden = !!el.hide
               const lines = showVals && !dragging && !hidden ? (isComm(el.kind) ? commLines(el) : valueLines(el, r)) : []
               return (
@@ -948,13 +893,8 @@ export function SystemLabApp() {
                   </>
                 )}
                 {sessions.length === 0 && <p className="hint">Nenhum relé ativo. Abra o DigitalRelay, carregue um .rdb e crie o relé; ele aparece aqui.</p>}
-                <p className="hint">Ligue o terminal do IED a uma <b>Rede</b>. Só os IEDs ligados à mesma rede trocam mensagens GOOSE.</p>
+                <p className="hint">Os IEDs associados a relés do mesmo projeto IEC61850 (aba IEC 61850 do DigitalRelay / app IEC61850) se comunicam por GOOSE automaticamente.</p>
               </>
-            )}
-            {selEl.kind === 'network' && (
-              <p className="hint">
-                IEDs nesta rede: <b>{memberCount.get(selEl.id) ?? 0}</b>. Ligue o terminal de cada IED a um dos 8 terminais (●) do círculo. Ao ligar duas Redes entre si, elas se comunicam: os IEDs de cada uma passam a valer também na outra (a contagem inclui as redes ligadas). Relés não ligados à mesma rede não fecham comunicação GOOSE.
-              </p>
             )}
             <label className="sl-field">
               <span>Ocultar nome e dados no diagrama</span>

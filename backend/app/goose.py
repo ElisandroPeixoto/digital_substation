@@ -73,7 +73,6 @@ class GooseNetwork:
     cut: set[str] = field(default_factory=set)                    # IEDs com cabo desconectado
     status_on_loss: bool = True                                   # pubRxStatus = 1 enquanto a assinatura está inválida
     seed: int | None = None
-    networks: list[dict] | None = None                            # redes do SystemLab: [{id, name, sids}]; None = tudo interligado
 
     @property
     def vlan_aware(self) -> bool:
@@ -82,17 +81,6 @@ class GooseNetwork:
     @vlan_aware.setter
     def vlan_aware(self, value: bool) -> None:
         self.project.vlan_aware = bool(value)
-
-    def same_net(self, sid_a: str | None, sid_b: str | None) -> bool:
-        """Com topologia do SystemLab ativa, só relés na mesma rede se comunicam; sem topologia, todos se comunicam."""
-        if self.networks is None:
-            return True
-        if not sid_a or not sid_b:
-            return False
-        return any(sid_a in n["sids"] and sid_b in n["sids"] for n in self.networks)
-
-    def in_any_net(self, sid: str) -> bool:
-        return self.networks is None or any(sid in n["sids"] for n in self.networks)
 
     def __post_init__(self) -> None:
         self._pub: dict[tuple[str, str], _Pub] = {}
@@ -133,8 +121,6 @@ class GooseNetwork:
             return False, "simulação pausada"
         if ied.name in self.cut:
             return False, "cabo de rede desconectado (simulado)"
-        if not self.in_any_net(sid):
-            return False, "relé fora de qualquer rede do SystemLab"
         if not rdb_flag(eng, "E61850"):
             return False, "E61850 = N no ajuste (porta 1)"
         if not rdb_flag(eng, "EGSE"):
@@ -204,13 +190,9 @@ class GooseNetwork:
             ext: dict[str, bool] = {}
             for sub in ied.subs:
                 rx = self._rx.setdefault((name, sub.pub_ied, sub.cb_name), _Rx())
-                psid = self.sid_of(sub.pub_ied)
-                other_net = bool(psid) and not self.same_net(psid, sid)
                 tal = 2.0 * max(self._max_ms(sub), 1.0) / 1000.0
                 if not sub.enabled:
                     rx.valid, rx.reason = False, "assinatura desabilitada (simulação)"
-                elif other_net and ok:
-                    rx.valid, rx.reason = False, "publicador em outra rede do SystemLab"
                 elif not ok:
                     rx.valid, rx.reason = False, why
                 elif rx.last_rx is None:
@@ -220,7 +202,7 @@ class GooseNetwork:
                 if rx.valid:
                     rx.reason = "ok"
                 for i, e in enumerate(sub.entries):
-                    if e.vb and _VB.fullmatch(e.vb):
+                    if e.vb and _VB.fullmatch(e.vb) and not (e.fcda and e.fcda.is_quality):
                         ext[e.vb] = bool(rx.values[i]) if rx.valid and i < len(rx.values) else False
                 if sub.status_vb and _VB.fullmatch(sub.status_vb):
                     ext[sub.status_vb] = (not rx.valid) if self.status_on_loss else rx.valid
@@ -244,7 +226,7 @@ class GooseNetwork:
                 if sub.pub_ied != m.src or sub.cb_name != m.cb:
                     continue
                 rx = self._rx.setdefault((name, m.src, m.cb), _Rx())
-                if not live[name][0] or not sub.enabled or not self.same_net(self.sid_of(m.src), self.sid_of(name)):
+                if not live[name][0] or not sub.enabled:
                     continue
                 errs = [i.text for i in check_subscription(sub, pg, pub, self.vlan_aware) if i.level == "error"]
                 if errs:
@@ -275,4 +257,4 @@ class GooseNetwork:
                          "rdb_egse": bool(sid and sid in sessions and rdb_flag(sessions[sid].engine, "EGSE")),
                          "pubs": pubs, "subs": subs})
         return {"bindings": dict(self.bindings), "latency_ms": self.latency_ms, "loss_pct": self.loss_pct,
-                "status_on_loss": self.status_on_loss, "vlan_aware": self.vlan_aware, "topology": self.networks, "sent": self.sent_total, "lost": self.lost_total, "ieds": ieds}
+                "status_on_loss": self.status_on_loss, "vlan_aware": self.vlan_aware, "sent": self.sent_total, "lost": self.lost_total, "ieds": ieds}

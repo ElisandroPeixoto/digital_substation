@@ -66,6 +66,11 @@ class Fcda:
     bit: str = ""            # bit do relé correspondente (ex.: SV10T), quando reconhecido
     desc: str = ""
 
+    @property
+    def is_quality(self) -> bool:
+        """Atributo de qualidade (.q) do dado: o assinante o ignora."""
+        return self.da_name.lower() == "q"
+
     def ref(self) -> str:
         return f"{self.ld_inst}/{self.prefix}{self.ln_class}{self.ln_inst}.{self.do_name}.{self.da_name}"
 
@@ -73,7 +78,7 @@ class Fcda:
 def fcda_bit(f: Fcda) -> tuple[str, str]:
     """(bit do relé, descrição) a partir do prefixo do GGIO e do índice IndNN."""
     m = re.search(r"(\d+)$", f.do_name)
-    if not m or f.prefix not in _PREFIX:
+    if f.is_quality or not m or f.prefix not in _PREFIX:
         return "", ""
     pat, what = _PREFIX[f.prefix]
     n = int(m.group(1))
@@ -216,8 +221,14 @@ def _parse_ied(el: ET.Element, ap: dict, gse: dict, filename: str) -> Ied:
                 go_id=g.get("appId", ""), conf_rev=_int(g.get("confRev"), 1), mac=g.get("mAddr", ""), appid=g.get("APPID", ""),
                 vlan_id=g.get("VLAN-ID", ""), vlan_prio=g.get("VLAN-PRIORITY", ""), status_vb=g.get("pubRxStatus", ""), source="SEL_GooseSubscription")
             for i, e in enumerate(g.findall("e:GooseRxEntry", NS)):
+                text = " ".join(e.get(k, "") for k in ("tdlString", "desc", "name")).lower()
                 m = re.match(r"\(([^)]+)\)", e.get("tdlString", ""))
-                sub.entries.append(SubEntry(index=i + 1, vb=m.group(1) if m else ""))
+                if "message quality" in text and m:        # estado da comunicação GOOSE com o publicador (vale 1 se falhar)
+                    sub.status_vb = sub.status_vb or m.group(1)
+                    continue
+                tok = m.group(1) if m else ""
+                vm = re.match(r"(VB\d{3})(?:\$.*)?$", tok)     # "VB001$r0": o sufixo $... é interno da SEL
+                sub.entries.append(SubEntry(index=len(sub.entries) + 1, vb=vm.group(1) if vm else tok))
             ied.subs.append(sub)
     if not ied.subs:
         _subs_from_extref(el, ied)
@@ -233,12 +244,14 @@ def _subs_from_extref(el: ET.Element, ied: Ied) -> None:
         key = (ex.get("iedName", ""), ex.get("srcCBName", ""))
         sub = by.setdefault(key, Subscription(pub_ied=key[0], cb_name=key[1], ld_inst=ex.get("srcLDInst", "CFG"), source="ExtRef"))
         addr = (ex.get("intAddr") or "").split("|")[0]
-        if ex.get("doName"):
+        if ex.get("daName", "").lower() == "q":
+            continue                                   # qualidade do dado: o assinante a ignora
+        if "message quality" in (ex.get("desc", "") + " " + ex.get("intAddr", "")).lower() or not ex.get("doName") and not ex.get("daName"):
+            sub.status_vb = addr
+        elif ex.get("doName"):
             f = Fcda(ex.get("ldInst", ""), ex.get("prefix", ""), ex.get("lnClass", ""), ex.get("lnInst", ""), ex.get("doName", ""), ex.get("daName", ""), "ST")
             f.bit, f.desc = fcda_bit(f)
             sub.entries.append(SubEntry(index=len(sub.entries) + 1, vb=addr, fcda=f))
-        else:
-            sub.status_vb = addr
     ied.subs.extend(by.values())
 
 
@@ -432,7 +445,7 @@ class SclProject:
             for g, gc in zip(d["gcbs"], ied.gcbs):
                 g["modified"] = gm.get(gc.name, [])
                 g["subscribers"] = [{"ied": n, "status_vb": s.status_vb,
-                                     "vbs": [e.vb for e in s.entries if e.vb]} for n, s in self.subscribers_of(ied.name, gc.name)]
+                                     "vbs": [e.vb for e in s.entries if e.vb and not (e.fcda and e.fcda.is_quality)]} for n, s in self.subscribers_of(ied.name, gc.name)]
             for s_d, s in zip(d["subs"], ied.subs):
                 pub = self.ieds.get(s.pub_ied)
                 gcb = pub.gcb(s.cb_name) if pub else None

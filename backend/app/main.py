@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import uuid
 from pathlib import Path
 from urllib.parse import quote
@@ -266,9 +267,17 @@ async def set_input(sid: str, body: InputBody) -> dict:
     return {"ok": True}
 
 
+def _check_vb_free(sid: str, name: str) -> None:
+    """VBs de um relé associado a um IED do app IEC61850 pertencem ao GOOSE: não podem ser acionados/forçados à mão."""
+    ied = manager.net.bindings.get(sid)
+    if ied and re.fullmatch(r"VB\d{3}", name.strip().upper()):
+        raise HTTPException(409, f"Não é possível forçar {name.strip().upper()}: o relé está associado ao IED {ied} e seus bits virtuais são usados no app IEC61850 do simulador.")
+
+
 @app.post("/api/sessions/{sid}/bits")
 async def set_bit(sid: str, body: BitBody) -> dict:
     """SEL-2440: aciona bits virtuais (VB), de controle (CB) ou remotos (RB): set, clear, toggle ou pulse."""
+    _check_vb_free(sid, body.name)
     try:
         _session(sid).engine.set_bit(body.name, body.mode)
     except ValueError as exc:
@@ -284,6 +293,8 @@ class ForceBody(BaseModel):
 @app.post("/api/sessions/{sid}/force")
 async def force_var(sid: str, body: ForceBody) -> dict:
     eng = _session(sid).engine
+    if body.value is not None:
+        _check_vb_free(sid, body.name)
     try:
         eng.force(body.name, body.value)
     except ValueError as exc:
@@ -432,10 +443,6 @@ class BindBody(BaseModel):
     ied: str | None = None
 
 
-class TopologyBody(BaseModel):
-    networks: list[dict] | None = None      # [{id, name, sids}]; None desliga a topologia (todos interligados)
-
-
 class NetBody(BaseModel):
     vlan_aware: bool | None = None
     latency_ms: float | None = None
@@ -564,17 +571,6 @@ async def iec_network(body: NetBody) -> dict:
     if body.cut is not None:
         net.cut = {n for n in body.cut if n in net.project.ieds}
     return {"latency_ms": net.latency_ms, "loss_pct": net.loss_pct, "status_on_loss": net.status_on_loss, "vlan_aware": net.vlan_aware, "cut": sorted(net.cut)}
-
-
-@app.post("/api/iec61850/topology")
-async def iec_topology(body: TopologyBody) -> dict:
-    """Redes definidas no SystemLab. Com topologia ativa, relés só se comunicam por GOOSE dentro da mesma rede."""
-    if body.networks is None:
-        manager.net.networks = None
-    else:
-        manager.net.networks = [{"id": str(n.get("id", "")), "name": str(n.get("name", "")), "sids": [str(x) for x in n.get("sids", [])]}
-                                for n in body.networks[:64]]
-    return {"networks": manager.net.networks}
 
 
 # ---------------------------------------------------------------- Mirrored Bits (MBitConfig)

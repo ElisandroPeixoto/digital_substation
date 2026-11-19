@@ -125,7 +125,6 @@ export const api = {
     req<IecProject>('POST', '/iec61850/sub', { ied, pub, cb, fields, vbs }),
   iecReset: (ied?: string) => req<IecProject>('POST', '/iec61850/reset', { ied: ied ?? null }),
   iecBind: (sid: string, ied: string | null) => req<unknown>('POST', '/iec61850/bind', { sid, ied }),
-  iecTopology: (networks: { id: string; name: string; sids: string[] }[] | null) => req<unknown>('POST', '/iec61850/topology', { networks }),
   iecNetwork: (body: { vlan_aware?: boolean; latency_ms?: number; loss_pct?: number; status_on_loss?: boolean; cut?: string[] }) =>
     req<unknown>('POST', '/iec61850/network', body),
 }

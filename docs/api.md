@@ -68,7 +68,6 @@ Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclip
 | POST | `/iec61850/sub` | `{ied, pub, cb, fields, vbs}` – idem para a assinatura (`+ status_vb`); `vbs` = `{índice: "VBnnn"}`. |
 | POST | `/iec61850/reset` | `{ied?}` – restaura os valores do arquivo. |
 | POST | `/iec61850/network` | `{vlan_aware?, latency_ms?, loss_pct?, status_on_loss?, cut?: [IED]}` (`vlan_aware: false` desconsidera VLAN-ID/prioridade). |
-| POST | `/iec61850/topology` | `{networks: [{id, name, sids}] \| null}` – redes do SystemLab; com topologia ativa só relés (sids) da mesma rede se comunicam; `null` = todos interligados. |
 
 Detalhes: [iec61850.md](iec61850.md).
 
