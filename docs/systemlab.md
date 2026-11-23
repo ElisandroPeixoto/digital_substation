@@ -1,4 +1,4 @@
-﻿# SystemLab
+# SystemLab
 
 Aplicativo do Eclipse para **montar um sistema elÃ©trico em diagrama unifilar** e simular tensÃµes, correntes e potÃªncias.
 O usuÃ¡rio arrasta elementos de uma barra lateral, liga seus terminais, ajusta parÃ¢metros e vÃª os resultados em tempo real.
@@ -208,6 +208,39 @@ Dois elementos da barra esquerda nÃ£o tÃªm efeito elÃ©trico (o solver os i
 
 **Regra:** não há elemento de rede. Dois IEDs do diagrama associados a relés do **mesmo projeto IEC61850** (app IEC61850, aba "Simulação") se comunicam por GOOSE automaticamente; o que decide é o vínculo relé ↔ IED do projeto, os ajustes (E61850/EGSE, assinaturas) e as condições de falha (latência, perda, cabo) do app IEC61850.
 
+### Atalhos na tela (IED)
+
+Com um relé associado ao IED, a seção **Atalhos na tela (mapa DNP3)** das propriedades monta um **painel flutuante** sobre o diagrama (arraste pelo cabeçalho; ▾/▸ recolhe) para facilitar a análise sem sair do SystemLab. Só podem ser associados **pontos do mapa DNP3 do relé** (os `NA` não aparecem):
+
+- **Comando (BO):** botão que envia o comando `PULSE_ON` direto ao ponto (mesmo caminho da aba DNP3; a resposta, como `SUCCESS` ou `NOT_SUPPORTED`, aparece no painel).
+- **Valor binário (BI):** lâmpada com 0/1 do ponto.
+- **Medida (AI):** valor do ponto, com unidade sugerida.
+
+Os valores são lidos do mapa a cada 0,7 s. Rótulos são editáveis (padrão = descrição do ponto) e a ordem pode ser alterada (▲▼). Se o mapa DNP3 do relé for trocado e o índice passar a apontar para outro bit, o atalho fica inativo (`–`). Os atalhos ficam salvos no diagrama (`systemlab.diagram`).
+
+## Linha
+
+Elemento de dois terminais com **comprimento (km)** e **impedância por km**: **R** e **Xl** de sequência positiva/negativa (Ω/km) e **R0/Xl0** de sequência zero (usados nas faltas à terra). A impedância total é comprimento × impedância por km (convertida para pu na tensão de base do trecho); não há capacitância shunt. Nas propriedades aparecem a impedância total, as perdas e as grandezas de cada terminal.
+
+**Falta em um ponto da linha:** no elemento **Falta**, escolha **Aplicar em uma linha** e informe a **Posição na linha (0 a 100 %)** contada a partir do terminal 1 (ex.: 10 %, 50 %). A linha é dividida em dois trechos (p·Z e (1−p)·Z, nas sequências positiva, negativa e zero) e a falta é aplicada no nó entre eles, sem precisar ligar o terminal da falta. O painel "Em falta" mostra o ponto (ex.: "A-N a 10 % de LT1"), as impedâncias de Thévenin e as correntes/tensões nos terminais da linha. Com a opção em branco, a falta continua valendo no ponto ligado ao terminal.
+## Faltas (curto-circuito)
+
+O elemento **Falta** (barra de elementos) tem um terminal que se liga a **qualquer ponto** do diagrama (barramento ou terminal de qualquer elemento). **Derivação em um trecho:** arraste a partir de um terminal (ex.: o da falta) e solte sobre uma ligação existente, ou clique no terminal e depois no trecho. A ligação encosta no trecho com um ponto de junção (mesmo nó elétrico da ligação-alvo) e acompanha o trecho se ele mudar de lugar; apagar a ligação-alvo apaga as derivações.
+
+Propriedades: **Falta aplicada** (liga/desliga), **Tipo de falta** e **Resistência de falta** (Ω).
+
+Tipos: trifásica ABC; monofásica A-N, B-N, C-N; bifásica A-B, B-C, C-A; bifásica com neutro A-B-N, B-C-N, C-A-N. Fórmulas padrão por componentes simétricas (Rf na falta trifásica/bifásica entre fases; por fase à terra na monofásica; no caminho da terra na bifásica com neutro).
+
+**Aterramento (modelo):**
+- **Fonte (gerador):** *Neutro aterrado* e *Z0/Z1* (seq. zero). Fonte sem aterramento não fornece sequência zero.
+- **Transformador:** o **esquema de ligação** (campo da propriedade; ex.: Dyn1, Dyn11, YNd1, YNyn0, Dd0…) define Δ/Y/Y aterrado de cada lado e a defasagem. Maiúsculas = terminal 1 (alta), minúsculas = terminal 2; N/
+ = neutro aterrado; o número é o índice horário (a tensão do terminal 2 atrasa a do 1 em n × 30°). A defasagem vale no regime normal e na falta (sequência negativa com sinal oposto). Sequência zero: YNyn passa de um lado ao outro; YNd/Dyn só fecha o caminho do lado aterrado (impedância do trafo); demais ligações bloqueiam.
+- Carga e inversor: passivos nas sequências negativa; zero aberta. Inversor seguidor mantém a corrente pré-falta; formador entra como fonte de tensão com 5 % de impedância.
+
+**Ver antes de rodar:** com a Falta aplicada, selecione-a (ou qualquer elemento) para ver, **sem dar Play**, a tensão fase-neutro e a corrente de cada terminal por **fase (A, B, C)** e por **componente de sequência (+, −, 0)**, além das impedâncias de Thévenin no ponto. O estudo sempre considera as fontes ligadas.
+
+**Rodando:** com Play ou Pause, o diagrama passa a mostrar os valores em falta (menor tensão fase-fase e maior corrente de fase) e os **IEDs associados a TC/TP recebem os fasores por fase** (correntes e tensões desequilibradas, relés podem atuar e abrir o disjuntor associado, o que retira a falta do caminho). Uma falta por vez (a primeira aplicada). Código: `solver.ts` (`faultStudy`), elementos em `model.ts`, painel `FaultPanel` em `SystemLabApp.tsx`.
+
 ## Bateria e Inversor (BESS)
 
 - **Bateria** (1 terminal CC): tensão CC nominal (V), capacidade (kWh), SOC (%), SOC mínimo e máximo (%).
@@ -231,3 +264,7 @@ A barra superior do SystemLab tem **▶ Play / ⏸ Pause**, **⏹ Parar**, a **v
 - **Parar:** desliga as fontes, zera o relógio e pausa os relés associados (a lógica deles não é reiniciada).
 
 Os relés só são controlados depois que você usa Play/Pause/Parar pela primeira vez.
+
+## Configurações (engrenagem)
+
+O botão ⚙ da barra do SystemLab abre as configurações: **Potência de base (Sbase, MVA; padrão 100)** e **Exibir grandezas em pu**. A base é a referência do cálculo por unidade (impedâncias, corrente de base, potências); os resultados físicos em kV, A e MW não dependem dela. Com a opção em pu, as telas mostram tensão ÷ tensão de base do terminal (kV fase-fase; fase-neutro no estudo de falta), corrente ÷ corrente de base e potências ÷ Sbase. Ficam salvas no navegador (`localStorage` `systemlab.settings`).

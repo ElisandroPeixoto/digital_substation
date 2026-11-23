@@ -51,6 +51,16 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
           <circle cx={11} cy={0} r={18} />
         </g>
       )
+    case 'line':
+      // trecho de linha: bloco alongado com marcas diagonais
+      return (
+        <g {...s}>
+          <line x1={-40} y1={0} x2={-26} y2={0} />
+          <line x1={26} y1={0} x2={40} y2={0} />
+          <rect x={-26} y={-8} width={52} height={16} rx={2} />
+          <path d="M -16 6 L -8 -6 M -2 6 L 6 -6 M 12 6 L 20 -6" />
+        </g>
+      )
     case 'bus':
       return <line x1={-cells * 10} y1={0} x2={cells * 10} y2={0} stroke={color} strokeWidth={6} strokeLinecap="round" />
     case 'ied':
@@ -110,6 +120,15 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
           <path d="M -16.2 -19 A 8.1 8.1 0 0 0 0 -19 A 8.1 8.1 0 0 0 16.2 -19" />
           <path d="M -16.2 3.5 A 8.1 8.1 0 0 1 0 3.5 A 8.1 8.1 0 0 1 16.2 3.5" />
           <line x1={0} y1={3.5} x2={0} y2={24.5} />
+        </g>
+      )
+    case 'fault':
+      // raio de cima para baixo; a seta (ponta) do raio liga ao ponto da falta pelo terminal inferior
+      return (
+        <g {...s}>
+          <path d="M 6 -36 L -6 -8 L 6 -8 L 0 22" strokeWidth={3} stroke="var(--err)" strokeLinejoin="round" />
+          <path d="M -7 14 L 0 26 L 7 14 Z" fill="var(--err)" stroke="var(--err)" strokeLinejoin="round" />
+          <line x1={0} y1={26} x2={0} y2={40} />
         </g>
       )
     case 'tc':

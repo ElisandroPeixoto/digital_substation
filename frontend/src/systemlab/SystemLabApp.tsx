@@ -1,13 +1,14 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { simTime, usePrefs } from '../prefs'
 import type { SessionBrief } from '../types'
 import {
-  BUS_MAX_CELLS, GRID, KINDS, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
+  BUS_MAX_CELLS, FAULT_TYPES, GRID, KINDS, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
   type Diagram, type El, type Kind, type PortRef,
 } from './model'
-import { solve, type ElResult, type Ph } from './solver'
+import { DEFAULT_SBASE, solve, type ElResult, type FaultStudy, type Ph, type PhasorSet } from './solver'
 import { ElementSymbol, SymbolShape } from './symbols'
+import { ShortcutEditor, ShortcutPanel } from './Shortcuts'
 
 const KEY = 'systemlab.diagram'
 const DND = 'application/x-systemlab'
@@ -75,6 +76,7 @@ function load(): Diagram {
   try {
     const d = JSON.parse(localStorage.getItem(KEY) ?? 'null')
     if (d && Array.isArray(d.els) && Array.isArray(d.wires) && typeof d.nextId === 'number') {
+      d.wires = pruneTaps(d.wires)
       const gone = new Set<number>(d.els.filter((e: { kind: string }) => e.kind === 'network').map((e: { id: number }) => e.id))   // elemento Rede removido
       if (gone.size === 0) return d
       return { ...d, els: d.els.filter((e: { id: number }) => !gone.has(e.id)), wires: d.wires.filter((w: Diagram['wires'][number]) => !gone.has(w.a[0]) && !gone.has(w.b[0])) }
@@ -138,6 +140,36 @@ function simplify(pts: Pt[]): Pt[] {
   return out
 }
 
+/** Ponto do trajeto mais próximo de (x, y); em trechos ortogonais o ponto é alinhado à grade. */
+function nearestOnPath(path: Pt[], x: number, y: number): { pt: Pt; d: number } {
+  let best: { pt: Pt; d: number } = { pt: path[0], d: Infinity }
+  for (let i = 0; i < path.length - 1; i++) {
+    const [x1, y1] = path[i]
+    const [x2, y2] = path[i + 1]
+    const len2 = (x2 - x1) ** 2 + (y2 - y1) ** 2
+    if (len2 === 0) continue
+    const t = clamp(((x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)) / len2, 0, 1)
+    let px = x1 + t * (x2 - x1)
+    let py = y1 + t * (y2 - y1)
+    if (y1 === y2) px = clamp(snap(px), Math.min(x1, x2), Math.max(x1, x2))
+    else if (x1 === x2) py = clamp(snap(py), Math.min(y1, y2), Math.max(y1, y2))
+    const d = Math.hypot(x - px, y - py)
+    if (d < best.d) best = { pt: [px, py], d }
+  }
+  return best
+}
+
+/** Remove derivações cuja ligação-alvo não existe mais (em cascata). */
+function pruneTaps(wires: Diagram['wires']): Diagram['wires'] {
+  let cur = wires
+  for (;;) {
+    const ids = new Set(cur.map((w) => w.id))
+    const next = cur.filter((w) => !w.tap || ids.has(w.tap.w))
+    if (next.length === cur.length) return cur
+    cur = next
+  }
+}
+
 /** Trajeto da ligação: automático, ou passando pelos pontos `via` (cotovelos são inseridos se algum extremo se moveu). */
 function wirePath(a: Pt, b: Pt, via?: Pt[]): Pt[] {
   if (!via || via.length === 0) return routePoints(a, b)
@@ -162,27 +194,39 @@ const fmt = (x: number, d = 2) => {
   const r = Math.round(x * f) / f
   return (Object.is(r, -0) || r === 0 ? 0 : r).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d })
 }
-const ph = (p: Ph | undefined, unit: string, d = 2) => (p ? `${fmt(p.mag, d)} ${unit} ∠${fmt(p.ang, 1)}°` : '–')
+/** Exibição: valores em unidades de engenharia ou em pu (base = potência de base e tensão de base do terminal). Atualizado a cada renderização. */
+const DISP = { pu: false, sbase: DEFAULT_SBASE }
+/** Potência (MW/Mvar/MVA) em pu quando habilitado. */
+const fP = (x: number, d = 2) => (DISP.pu ? `${fmt(x / DISP.sbase, 4)} pu` : `${fmt(x, d)} MW`)
+const fQ = (x: number, d = 2) => (DISP.pu ? `${fmt(x / DISP.sbase, 4)} pu` : `${fmt(x, d)} Mvar`)
+/** Tensão em kV (fase-fase; `ln` = fase-neutro) ou pu da tensão de base `kvb` (fase-fase) do terminal. */
+const fV = (p: Ph | undefined, kvb: number | undefined, d = 2, ln = false) =>
+  (p ? (DISP.pu && kvb && kvb > 0 ? `${fmt(p.mag / (ln ? kvb / Math.sqrt(3) : kvb), 4)} pu ∠${fmt(p.ang, 1)}°` : `${fmt(p.mag, d)} kV ∠${fmt(p.ang, 1)}°`) : '–')
+const fI = (p: Ph | undefined, kvb: number | undefined, d = 1) =>
+  (p ? (DISP.pu && kvb && kvb > 0 ? `${fmt(p.mag / ((DISP.sbase * 1000) / (Math.sqrt(3) * kvb)), 4)} pu ∠${fmt(p.ang, 1)}°` : `${fmt(p.mag, d)} A ∠${fmt(p.ang, 1)}°`) : '–')
+const fIm = (mag: number, kvb: number | undefined, d = 1) => fI({ mag, ang: 0 }, kvb, d).replace(/ ∠.*$/, '')
 
 function valueLines(el: El, r: ElResult | undefined): string[] {
   if (!r) return []
   switch (el.kind) {
     case 'ied': return []
-    case 'battery': return [`SOC ${fmt(r.extra.soc, 0)}% · ${fmt(r.extra.pdc)} MW`, r.note ?? '']
-    case 'inverter': return [r.energized ? `${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar` : (r.note ?? 'inativo'), ...(r.energized && r.note ? [r.note] : [])]
-    case 'bus': return [r.energized ? ph(r.v[0], 'kV') : 'desenergizado']
-    case 'source': return [`${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar`]
-    case 'load': return r.energized ? [`${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar`, `${fmt(r.v[0].mag)} kV`] : ['desenergizado']
+    case 'battery': return [`SOC ${fmt(r.extra.soc, 0)}% · ${fP(r.extra.pdc)}`, r.note ?? '']
+    case 'inverter': return [r.energized ? `${fP(r.extra.p)} · ${fQ(r.extra.q)}` : (r.note ?? 'inativo'), ...(r.energized && r.note ? [r.note] : [])]
+    case 'bus': return [r.energized ? fV(r.v[0], r.kvb?.[0]) : 'desenergizado']
+    case 'source': return [`${fP(r.extra.p)} · ${fQ(r.extra.q)}`]
+    case 'load': return r.energized ? [`${fP(r.extra.p)} · ${fQ(r.extra.q)}`, fV({ mag: r.v[0].mag, ang: 0 }, r.kvb?.[0]).replace(/ ∠.*$/, '')] : ['desenergizado']
     case 'breaker':
     case 'switch': {
       if (!flag(el, 'closed')) return ['aberto']
-      const main = r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : r.energized ? `${fmt(r.i[0].mag, 1)} A` : 'desenergizado'
+      const main = r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'}` : 'desenergizado'
       return r.note ? [main, `⚠ ${r.note}`] : [main]
     }
     case 'tc': if (r.extra.dc) return [`${fmt(r.extra.idc, 1)} A CC`]
-      return [r.energized ? `${fmt(r.i[0].mag, 1)} A → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
-    case 'transformer': return r.energized ? [`${fmt(r.p[0])} MW · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
+      return [r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'} → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
+    case 'transformer': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
+    case 'line': return r.energized ? [`${fmt(r.extra.len, 1)} km · ${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'}`] : [`${fmt(r.extra.len, 1)} km`]
     case 'tp': return [r.energized ? `${fmt(r.extra.vsec, 1)} V` : 'desenergizado']
+    case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${num(el, 'lid') > 0 ? ` @ ${fmt(num(el, 'pos'), 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}${DISP.pu ? '' : ' A'}` : 'sem corrente'}`] : ['desligada']
   }
 }
 
@@ -219,6 +263,20 @@ export function SystemLabApp() {
   const [dragIds, setDragIds] = useState<number[]>([]) // elementos sendo arrastados: mostram só o símbolo
   const [box, setBox] = useState<Box | null>(null)      // retângulo de seleção
   const [showVals, setShowVals] = useState(true)
+  // configurações do SystemLab (engrenagem): potência de base e exibição em pu
+  const [cfg, setCfg] = useState<{ sbase: number; pu: boolean }>(() => {
+    try {
+      const j = JSON.parse(localStorage.getItem('systemlab.settings') ?? '{}')
+      return { sbase: Number.isFinite(j.sbase) && j.sbase > 0 ? j.sbase : DEFAULT_SBASE, pu: j.pu === true }
+    } catch { return { sbase: DEFAULT_SBASE, pu: false } }
+  })
+  const [showCfg, setShowCfg] = useState(false)
+  const saveCfg = (n: { sbase: number; pu: boolean }) => {
+    setCfg(n)
+    try { localStorage.setItem('systemlab.settings', JSON.stringify(n)) } catch { /* ignora */ }
+  }
+  DISP.pu = cfg.pu
+  DISP.sbase = cfg.sbase
   const { prefs } = usePrefs()
   const [run, setRun] = useState<'stopped' | 'playing' | 'paused'>('stopped')   // parado: fontes desligadas; Play energiza e roda
   const [speed, setSpeed] = useState(1)
@@ -242,7 +300,11 @@ export function SystemLabApp() {
 
   const dgRef = useRef(dg)
   dgRef.current = dg
-  const sol = useMemo(() => solve(dg.els, dg.wires, run !== 'stopped'), [dg, run])
+  const solBase = useMemo(() => solve(dg.els, dg.wires, run !== 'stopped', false, cfg.sbase), [dg, run, cfg.sbase])
+  // estudo de falta: sempre com as fontes ligadas (permite ver as grandezas antes de rodar); em execução, o diagrama passa a mostrar a falta
+  const hasFault = dg.els.some((e) => e.kind === 'fault' && flag(e, 'on'))
+  const study = useMemo(() => (hasFault ? solve(dg.els, dg.wires, true, true, cfg.sbase) : null), [dg, hasFault, cfg.sbase])
+  const sol = run !== 'stopped' && study?.fault ? study : solBase
 
   // relógio da simulação (tempo real × velocidade)
   useEffect(() => {
@@ -307,16 +369,26 @@ export function SystemLabApp() {
       if (tc?.kind === 'tc' || tp?.kind === 'tp') {
         const patch: Record<string, number | boolean> = { analog_on: true }
         const r = tc?.kind === 'tc' ? sol.res.get(tc.id) : undefined
+        const ft = tc?.kind === 'tc' ? sol.fault?.terms.get(tc.id)?.[0] : undefined      // em falta: fasores por fase
         if (tc?.kind === 'tc') {
           const mag = r?.energized ? r.i[0].mag : 0
           const ang = r?.energized ? r.i[0].ang : 0
-          Object.assign(patch, { ia_mag: mag, ib_mag: mag, ic_mag: mag, ia_ang: ang, ib_ang: ang - 120, ic_ang: ang + 120 })
+          if (ft && r?.energized) {
+            Object.assign(patch, { ia_mag: ft.i.a.mag, ib_mag: ft.i.b.mag, ic_mag: ft.i.c.mag, ia_ang: ft.i.a.ang, ib_ang: ft.i.b.ang, ic_ang: ft.i.c.ang })
+          } else {
+            Object.assign(patch, { ia_mag: mag, ib_mag: mag, ic_mag: mag, ia_ang: ang, ib_ang: ang - 120, ic_ang: ang + 120 })
+          }
         }
         const rv = tp?.kind === 'tp' ? sol.res.get(tp.id) : undefined
+        const fv = tp?.kind === 'tp' ? sol.fault?.terms.get(tp.id)?.[0] : undefined
         if (tp?.kind === 'tp') {
           const mag = rv?.energized ? (rv.v[0].mag * 1000) / Math.sqrt(3) : 0
           const ang = rv?.energized ? rv.v[0].ang : 0
-          Object.assign(patch, { va_mag: mag, vb_mag: mag, vc_mag: mag, va_ang: ang, vb_ang: ang - 120, vc_ang: ang + 120 })
+          if (fv && rv?.energized) {
+            Object.assign(patch, { va_mag: fv.v.a.mag * 1000, vb_mag: fv.v.b.mag * 1000, vc_mag: fv.v.c.mag * 1000, va_ang: fv.v.a.ang, vb_ang: fv.v.b.ang, vc_ang: fv.v.c.ang })
+          } else {
+            Object.assign(patch, { va_mag: mag, vb_mag: mag, vc_mag: mag, va_ang: ang, vb_ang: ang - 120, vc_ang: ang + 120 })
+          }
         }
         const key = JSON.stringify(patch, (_, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v))
         if (key !== st.sent || now - st.t > 5000) {
@@ -358,9 +430,9 @@ export function SystemLabApp() {
   const removeSel = useCallback(() => {
     if (!sel) return
     setDg((d) => {
-      if (sel.type === 'wire') return { ...d, wires: d.wires.filter((w) => w.id !== sel.id) }
+      if (sel.type === 'wire') return { ...d, wires: pruneTaps(d.wires.filter((w) => w.id !== sel.id)) }
       const ids = new Set(sel.ids)
-      return { ...d, els: d.els.filter((e) => !ids.has(e.id)), wires: d.wires.filter((w) => !ids.has(w.a[0]) && !ids.has(w.b[0])) }
+      return { ...d, els: d.els.filter((e) => !ids.has(e.id)), wires: pruneTaps(d.wires.filter((w) => !ids.has(w.a[0]) && !ids.has(w.b[0]))) }
     })
     setSel(null)
   }, [sel])
@@ -432,8 +504,14 @@ export function SystemLabApp() {
   const onWireDown = (e: React.PointerEvent, w: Diagram['wires'][number]) => {
     e.stopPropagation()
     setSel({ type: 'wire', id: w.id })
+    if (wiring) {                                           // ligação em andamento: encosta no trecho clicado
+      const [tx, ty] = toWorld(e.clientX, e.clientY)
+      tapConnect(wiring, w, tx, ty)
+      setWiring(null)
+      return
+    }
     const a = portPos(w.a)
-    const b = portPos(w.b)
+    const b = wireB(w)
     if (!a || !b || e.button !== 0) return
     capture(e)
     const path = wirePath(a, b, w.via)
@@ -557,7 +635,12 @@ export function SystemLabApp() {
       if (a === d.from[0] && b === d.from[1]) return // clique simples: aguarda o segundo terminal
       connect(d.from, [a, b])
       setWiring(null)
-    } else if (moved) setWiring(null)
+    } else if (moved) {
+      const wid = Number((document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest('[data-wire]')?.getAttribute('data-wire'))
+      const target = Number.isFinite(wid) ? dgRef.current.wires.find((w) => w.id === wid) : undefined
+      if (target) { const [tx, ty] = toWorld(e.clientX, e.clientY); tapConnect(d.from, target, tx, ty) }
+      setWiring(null)
+    }
   }
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -573,7 +656,7 @@ export function SystemLabApp() {
     let best: { id: number; d: number; px: number; py: number; horiz: boolean } | null = null
     for (const w of dg.wires) {
       const a = portPos(w.a)
-      const b = portPos(w.b)
+      const b = wireB(w)
       if (!a || !b) continue
       const pts = wirePath(a, b, w.via)
       for (let i = 0; i < pts.length - 1; i++) {
@@ -602,7 +685,7 @@ export function SystemLabApp() {
       const near = Math.hypot(pa[0] - p0[0], pa[1] - p0[1]) <= Math.hypot(pa[0] - p1[0], pa[1] - p1[1]) ? 0 : 1
       return {
         els: [...d.els, tc],
-        wires: [...d.wires.filter((x) => x.id !== w.id), { id: id + 1, a: w.a, b: [id, near] }, { id: id + 2, a: [id, 1 - near], b: w.b }],
+        wires: pruneTaps([...d.wires.filter((x) => x.id !== w.id), { id: id + 1, a: w.a, b: [id, near] }, { id: id + 2, a: [id, 1 - near], b: w.b }]),
         nextId: id + 3,
       }
     })
@@ -634,6 +717,33 @@ export function SystemLabApp() {
   const portPos = (ref: PortRef): [number, number] | null => {
     const e = elById.get(ref[0])
     return e ? worldPorts(e)[ref[1]] ?? null : null
+  }
+  /** Extremo `b` da ligação no desenho: terminal, ou o ponto da derivação sobre o trecho da ligação-alvo. */
+  const wireB = (w: Diagram['wires'][number], depth = 0): Pt | null => {
+    if (!w.tap) return portPos(w.b)
+    const tw = dg.wires.find((x) => x.id === w.tap!.w)
+    if (!tw || depth > 4) return null
+    const a = portPos(tw.a)
+    const b = wireB(tw, depth + 1)
+    if (!a || !b) return null
+    return nearestOnPath(wirePath(a, b, tw.via), w.tap.x, w.tap.y).pt
+  }
+  /** Liga o terminal `from` a um trecho da ligação `target` (derivação) perto do ponto (wx, wy). */
+  const tapConnect = (from: PortRef, target: Diagram['wires'][number], wx: number, wy: number) => {
+    if (from[0] === target.a[0] || from[0] === target.b[0]) return
+    const a = portPos(target.a)
+    const b = wireB(target)
+    if (!a || !b) return
+    const path = wirePath(a, b, target.via)
+    let pt = nearestOnPath(path, wx, wy).pt
+    const fp = portPos(from)
+    if (fp) {                                                // se possível, a derivação sai em linha reta do terminal
+      for (const c of [[fp[0], pt[1]], [pt[0], fp[1]]] as Pt[]) {
+        const n = nearestOnPath(path, c[0], c[1])
+        if (n.d < 0.5 && Math.hypot(n.pt[0] - pt[0], n.pt[1] - pt[1]) < 100) { pt = n.pt; break }
+      }
+    }
+    setDg((d) => ({ ...d, wires: [...d.wires, { id: d.nextId, a: from, b: target.a, tap: { w: target.id, x: pt[0], y: pt[1] } }], nextId: d.nextId + 1 }))
   }
   const pathD = (pts: Pt[]) => pts.map(([x, y], i) => `${i ? 'L' : 'M'} ${x} ${y}`).join(' ')
   const route = (a: [number, number], b: [number, number]) => pathD(routePoints(a, b))
@@ -723,6 +833,7 @@ export function SystemLabApp() {
           <button onClick={fitView}>Centralizar vista</button>
           <label className="check"><input type="checkbox" checked={showVals} onChange={(e) => setShowVals(e.target.checked)} /> Mostrar valores</label>
           <span className="spacer" />
+          <button className="sl-gear" onClick={() => setShowCfg(true)} title="Configurações do SystemLab" aria-label="Configurações">⚙</button>
           <span className="muted">{Math.round(view.k * 100)}% · {dg.els.length} elementos · {dg.wires.length} ligações</span>
         </div>
         <svg
@@ -746,7 +857,7 @@ export function SystemLabApp() {
             {/* ligações */}
             {dg.wires.map((w) => {
               const a = portPos(w.a)
-              const b = portPos(w.b)
+              const b = wireB(w)
               if (!a || !b) return null
               const on = sol.nodeEnergized.get(`${w.a[0]}:${w.a[1]}`)
               const commWire = isComm(elById.get(w.a[0])?.kind ?? 'bus') || isComm(elById.get(w.b[0])?.kind ?? 'bus')
@@ -758,9 +869,11 @@ export function SystemLabApp() {
                   <path d={d} fill="none" stroke={selected ? 'var(--accent-2)' : commWire ? 'var(--accent-2)' : on ? 'var(--accent)' : 'var(--muted)'} strokeWidth={selected ? 3 : 2} strokeLinejoin="round" strokeDasharray={commWire ? '6 4' : undefined} />
                   <path
                     d={d} fill="none" stroke="transparent" strokeWidth={12} style={{ cursor: 'grab' }}
+                    data-wire={w.id}
                     onPointerDown={(e) => onWireDown(e, w)}
                     onDoubleClick={() => resetWire(w.id)}
                   />
+                  {w.tap && <circle cx={b[0]} cy={b[1]} r={4} fill={on ? 'var(--accent)' : 'var(--muted)'} pointerEvents="none" />}
                   {selected && path.slice(0, -1).map(([x1, y1], i) => (
                     <rect key={i} x={(x1 + path[i + 1][0]) / 2 - 4} y={(y1 + path[i + 1][1]) / 2 - 4} width={8} height={8} rx={2}
                       fill="var(--accent-2)" stroke="var(--panel)" pointerEvents="none" />
@@ -782,7 +895,7 @@ export function SystemLabApp() {
               const vertBus = isBar(el.kind) && el.rot % 2 === 1
               const lab: [number, number] = isBar(el.kind)
                 ? (vertBus ? [el.x + 16, el.y - busCells(el) * 10 - 6] : [el.x, el.y + 26])
-                : [el.x, el.y + (el.kind === 'ied' ? 46 : 40)]
+                : el.kind === 'fault' ? [el.x + 84, el.y - 12] : [el.x, el.y + (el.kind === 'ied' ? 46 : 40)]
               const hidden = !!el.hide
               const lines = showVals && !dragging && !hidden ? (isComm(el.kind) ? commLines(el) : valueLines(el, r)) : []
               return (
@@ -831,6 +944,27 @@ export function SystemLabApp() {
             {wiringPos && <path d={route(wiringPos, [snap(mouse[0]), snap(mouse[1])])} fill="none" stroke="var(--accent-2)" strokeWidth={2} strokeDasharray="5 4" pointerEvents="none" />}
           </g>
         </svg>
+        {showCfg && (
+          <div className="sl-modal" onPointerDown={(e) => { if (e.target === e.currentTarget) setShowCfg(false) }}>
+            <div className="sl-modal-card" role="dialog" aria-label="Configurações">
+              <div className="row"><h3>⚙ Configurações</h3><span className="spacer" /><button onClick={() => setShowCfg(false)}>Fechar</button></div>
+              <label className="sl-field">
+                <span>Potência de base (Sbase)</span>
+                <span><NumInput key={`sb-${cfg.sbase}`} value={cfg.sbase} onChange={(n) => saveCfg({ ...cfg, sbase: n > 0 ? n : DEFAULT_SBASE })} /> MVA</span>
+              </label>
+              <label className="sl-field">
+                <span>Exibir grandezas em pu</span>
+                <input type="checkbox" checked={cfg.pu} onChange={(e) => saveCfg({ ...cfg, pu: e.target.checked })} />
+              </label>
+              <div className="row"><button onClick={() => saveCfg({ ...cfg, sbase: DEFAULT_SBASE })} disabled={cfg.sbase === DEFAULT_SBASE}>Restaurar {DEFAULT_SBASE} MVA</button></div>
+            </div>
+          </div>
+        )}
+        {dg.els.filter((x) => x.kind === 'ied' && x.sid && (x.sc?.length ?? 0) > 0).map((x) => (
+          <ShortcutPanel key={x.id} el={x}
+            onMove={(px, py) => updateEl(x.id, (y) => ({ ...y, scPos: { x: px, y: py } }))}
+            onToggle={(o) => updateEl(x.id, (y) => ({ ...y, scOpen: o }))} />
+        ))}
         {dg.els.length === 0 && <div className="sl-empty">Arraste elementos da barra à esquerda para começar<br /><small>ou use “Carregar exemplo” e pressione Play</small></div>}
       </section>
 
@@ -851,6 +985,10 @@ export function SystemLabApp() {
                 <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
                 {f.type === 'bool' ? (
                   <input type="checkbox" checked={flag(selEl, f.key)} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: e.target.checked } }))} />
+                ) : f.type === 'select' ? (
+                  <select className="numinput" value={num(selEl, f.key)} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: Number(e.target.value) } }))}>
+                    {f.options!.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+                  </select>
                 ) : (
                   <NumInput key={`${selEl.id}-${f.key}`} value={num(selEl, f.key)} onChange={(n) => (isBar(selEl.kind) && f.key === 'cells'
                     ? setDg((g) => resizeBus(g, selEl.id, n, 'hi'))
@@ -858,6 +996,24 @@ export function SystemLabApp() {
                 )}
               </label>
             ))}
+            {selEl.kind === 'fault' && (
+              <>
+                <label className="sl-field">
+                  <span>Aplicar em uma linha</span>
+                  <select className="numinput" value={dg.els.some((x) => x.kind === 'line' && x.id === num(selEl, 'lid')) ? num(selEl, 'lid') : 0}
+                    onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, lid: Number(e.target.value) } }))}>
+                    <option value={0}>— ponto ligado ao terminal —</option>
+                    {dg.els.filter((x) => x.kind === 'line').map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                </label>
+                {dg.els.some((x) => x.kind === 'line' && x.id === num(selEl, 'lid')) && (
+                  <label className="sl-field">
+                    <span>Posição na linha (0–100 %, do terminal 1)</span>
+                    <NumInput key={`${selEl.id}-pos`} value={num(selEl, 'pos')} onChange={(n) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, pos: Math.min(100, Math.max(0, n)) } }))} />
+                  </label>
+                )}
+              </>
+            )}
             {selEl.kind === 'ied' && (
               <>
                 <label className="sl-field">
@@ -889,9 +1045,9 @@ export function SystemLabApp() {
                         </select>
                       </label>
                     ))}
-                    <p className="hint">O estado do <b>disjuntor</b> segue nos dois sentidos (a abertura pelo relé abre o disjuntor do diagrama). O <b>TC</b> fornece as correntes e o <b>TP</b> as tensões do relé (trifásico equilibrado, valores primários); a injeção analógica do relé é ligada.</p>
                   </>
                 )}
+                {selEl.sid && sessions.some((x) => x.id === selEl.sid) && <ShortcutEditor key={selEl.id} el={selEl} onChange={(f) => updateEl(selEl.id, f)} />}
                 {sessions.length === 0 && <p className="hint">Nenhum relé ativo. Abra o DigitalRelay, carregue um .rdb e crie o relé; ele aparece aqui.</p>}
                 <p className="hint">Os IEDs associados a relés do mesmo projeto IEC61850 (aba IEC 61850 do DigitalRelay / app IEC61850) se comunicam por GOOSE automaticamente.</p>
               </>
@@ -900,11 +1056,15 @@ export function SystemLabApp() {
               <span>Ocultar nome e dados no diagrama</span>
               <input type="checkbox" checked={!!selEl.hide} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, hide: e.target.checked }))} />
             </label>
-            <div className="row">
-              <button onClick={rotateSel}>↻ Girar (R)</button>
-              <button className="danger" onClick={removeSel}>Excluir</button>
-            </div>
             <Results el={selEl} r={selRes} />
+            <FaultPanel el={selEl} study={study?.fault ?? null} hasFault={hasFault} />
+            <div className="sl-actions">
+              <h4>Ações</h4>
+              <div className="row">
+                <button onClick={rotateSel}>↻ Girar (R)</button>
+                <button className="danger" onClick={removeSel}>🗑 Excluir</button>
+              </div>
+            </div>
           </>
         ) : multi ? (
           <>
@@ -942,8 +1102,51 @@ export function SystemLabApp() {
 }
 
 // ------------------------------------------------------------------ painéis
+const SET_ROWS: { k: keyof PhasorSet; l: string }[] = [
+  { k: 'a', l: 'Fase A' }, { k: 'b', l: 'Fase B' }, { k: 'c', l: 'Fase C' },
+  { k: 's1', l: 'Seq. + (1)' }, { k: 's2', l: 'Seq. − (2)' }, { k: 's0', l: 'Seq. 0' },
+]
+
+/** Estudo de falta do elemento selecionado: tensões (fase-neutro) e correntes por fase e por componente de sequência. */
+function FaultPanel({ el, study, hasFault }: { el: El; study: FaultStudy | null; hasFault: boolean }) {
+  if (el.kind === 'fault' && !hasFault) return <p className="hint">Marque “Falta aplicada” para calcular a falta. Ligue o terminal da falta ao ponto desejado (barramento, terminal de qualquer elemento).</p>
+  if (!hasFault) return null
+  if (!study) return el.kind === 'fault' ? <p className="hint warn">A falta não está ligada a um ponto energizado (verifique a ligação e se há fonte fechada até ele).</p> : null
+  const terms = study.terms.get(el.id)
+  if (!terms) return null
+  const isF = el.kind === 'fault' && el.id === study.info.elId
+  const tag = (k: number) => (el.kind === 'bus' || terms.length === 1 ? '' : ` – terminal ${k + 1}`)
+  return (
+    <div className="sl-results">
+      <h4>Em falta ({study.info.label}{study.info.line ? ` a ${fmt(study.info.line.pos, 1)}% de ${study.info.line.name}` : ''}{study.info.rf > 0 ? `, Rf = ${fmt(study.info.rf, 2)} Ω` : ''})</h4>
+      {study.warns.map((w) => <p key={w} className="hint warn">⚠ {w}</p>)}
+      {isF && (
+        <p className="hint">
+          Impedâncias de Thévenin no ponto: Z1 = {fmt(study.info.z1.mag, 3)} Ω ∠{fmt(study.info.z1.ang, 1)}° · Z2 = {fmt(study.info.z2.mag, 3)} Ω ∠{fmt(study.info.z2.ang, 1)}° ·
+          Z0 = {study.info.z0 ? `${fmt(study.info.z0.mag, 3)} Ω ∠${fmt(study.info.z0.ang, 1)}°` : '∞ (sem aterramento)'}
+        </p>
+      )}
+      {terms.map((t, k) => (
+        <table key={k} className="tbl meas">
+          <thead><tr><th>{`Fase / seq.${tag(k)}`}</th><th>{DISP.pu ? 'Tensão (pu, fase-neutro)' : 'Tensão (kV, fase-neutro)'}</th><th>{DISP.pu ? 'Corrente (pu)' : 'Corrente (A)'}</th></tr></thead>
+          <tbody>
+            {SET_ROWS.map((row) => (
+              <tr key={row.k}>
+                <td>{row.l}</td>
+                <td className="num">{fV(t.v[row.k], t.kvb, 3, true)}</td>
+                <td className="num">{el.kind === 'bus' || el.kind === 'tp' ? '–' : fI(t.i[row.k], t.kvb)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ))}
+      <p className="hint">Componentes de sequência no ponto de cada terminal (valor da componente, não 3×). A defasagem do transformador vem do esquema de ligação (ex.: Dyn1: terminal 2 atrasa 30°). Corrente positiva entrando no elemento (fonte: entregue). O resultado vale sem simular: ligue as fontes na simulação para ver estas grandezas no diagrama e injetadas nos relés.</p>
+    </div>
+  )
+}
+
 function Results({ el, r }: { el: El; r: ElResult | undefined }) {
-  if (!r || (el.kind === 'switch' && !r.note)) return null
+  if (!r || el.kind === 'fault' || (el.kind === 'switch' && !r.note)) return null
   if (r.extra.dc) {
     return (
       <div className="sl-results">
@@ -954,7 +1157,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
             {r.note && <tr><td>Aviso</td><td className="num">{r.note}</td></tr>}
             <tr><td>Tensão CC</td><td className="num">{fmt(r.extra.vdc, 0)} V</td></tr>
             <tr><td>Corrente CC (+ descarga)</td><td className="num">{fmt(r.extra.idc, 1)} A</td></tr>
-            <tr><td>Potência CC</td><td className="num">{fmt(r.extra.pdc, 3)} MW</td></tr>
+            <tr><td>Potência CC</td><td className="num">{fP(r.extra.pdc, 3)}</td></tr>
           </tbody>
         </table>
       </div>
@@ -970,7 +1173,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
             <tr><td>Estado</td><td className="num">{r.note}</td></tr>
             <tr><td>SOC</td><td className="num">{fmt(r.extra.soc, 1)} %</td></tr>
             <tr><td>Energia armazenada</td><td className="num">{fmt(r.extra.energy, 0)} kWh</td></tr>
-            <tr><td>Potência CC (+ descarga)</td><td className="num">{fmt(r.extra.pdc, 3)} MW</td></tr>
+            <tr><td>Potência CC (+ descarga)</td><td className="num">{fP(r.extra.pdc, 3)}</td></tr>
             <tr><td>Corrente CC</td><td className="num">{fmt(r.extra.idc, 1)} A</td></tr>
             <tr><td>Tempo até o limite de SOC</td><td className="num">{h < 0 ? '–' : `${fmt(h, 2)} h`}</td></tr>
           </tbody>
@@ -986,12 +1189,12 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
         <table className="tbl meas">
           <tbody>
             <tr><td>Estado</td><td className="num">{r.note || '–'}</td></tr>
-            <tr><td>P CA (+ injeta na rede)</td><td className="num">{fmt(r.extra.p, 3)} MW</td></tr>
-            <tr><td>Q CA (+ injeta)</td><td className="num">{fmt(r.extra.q, 3)} Mvar</td></tr>
+            <tr><td>P CA (+ injeta na rede)</td><td className="num">{fP(r.extra.p, 3)}</td></tr>
+            <tr><td>Q CA (+ injeta)</td><td className="num">{fQ(r.extra.q, 3)}</td></tr>
             <tr><td>Carregamento</td><td className="num">{fmt(r.extra.loading, 1)} %</td></tr>
-            <tr><td>Potência CC (+ descarga)</td><td className="num">{fmt(r.extra.pdc, 3)} MW</td></tr>
-            <tr><td>Tensão CA</td><td className="num">{ph(r.v[1], 'kV')}</td></tr>
-            <tr><td>Corrente CA</td><td className="num">{ph(r.i[1], 'A', 1)}</td></tr>
+            <tr><td>Potência CC (+ descarga)</td><td className="num">{fP(r.extra.pdc, 3)}</td></tr>
+            <tr><td>Tensão CA</td><td className="num">{fV(r.v[1], r.kvb?.[1])}</td></tr>
+            <tr><td>Corrente CA</td><td className="num">{fI(r.i[1], r.kvb?.[1])}</td></tr>
           </tbody>
         </table>
         <p className="hint">Com fonte na rede o inversor segue a rede (P/Q constantes, limitados pela potência nominal e pelo SOC). Sem fonte, ele forma a rede (ilhado) e fornece o que a carga consome.</p>
@@ -1002,24 +1205,24 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
     <div className="sl-results">
       <h4>Resultados</h4>
       {r.note && (el.kind === 'breaker' || el.kind === 'switch') && <p className="hint warn">⚠ {r.note}. Ajuste "Circuito CC" nas propriedades.</p>}
-      {!r.energized && el.kind !== 'source' && <p className="hint warn">Desenergizado (sem caminho fechado até uma fonte).</p>}
       <table className="tbl meas">
-        <thead><tr><th>Terminal</th><th>Tensão</th><th>Corrente</th><th>P (MW)</th><th>Q (Mvar)</th></tr></thead>
+        <thead><tr><th>Terminal</th><th>Tensão</th><th>Corrente</th><th>{DISP.pu ? 'P (pu)' : 'P (MW)'}</th><th>{DISP.pu ? 'Q (pu)' : 'Q (Mvar)'}</th></tr></thead>
         <tbody>
           {r.v.map((v, k) => (
             <tr key={k}>
               <td>{el.kind === 'bus' ? '–' : k + 1}</td>
-              <td className="num">{ph(v, 'kV')}</td>
-              <td className="num">{r.i[k] ? ph(r.i[k], 'A', 1) : '–'}</td>
-              <td className="num">{r.p[k] != null ? fmt(r.p[k]) : '–'}</td>
-              <td className="num">{r.q[k] != null ? fmt(r.q[k]) : '–'}</td>
+              <td className="num">{fV(v, r.kvb?.[k])}</td>
+              <td className="num">{r.i[k] ? fI(r.i[k], r.kvb?.[k]) : '–'}</td>
+              <td className="num">{r.p[k] != null ? fmt(DISP.pu ? r.p[k] / DISP.sbase : r.p[k], DISP.pu ? 4 : 2) : '–'}</td>
+              <td className="num">{r.q[k] != null ? fmt(DISP.pu ? r.q[k] / DISP.sbase : r.q[k], DISP.pu ? 4 : 2) : '–'}</td>
             </tr>
           ))}
         </tbody>
       </table>
       {el.kind === 'tp' && <p className="hint">Tensão secundária: <b>{fmt(r.extra.vsec, 2)} V</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
+      {el.kind === 'line' && <p className="hint">Impedância total (seq. +): <b>{fmt(r.extra.rt, 3)} + j{fmt(r.extra.xt, 3)} Ω</b> · comprimento {fmt(r.extra.len, 1)} km · perdas {fP(r.extra.loss, 3)}</p>}
       {el.kind === 'tc' && <p className="hint">Corrente secundária: <b>{fmt(r.extra.isec, 3)} A</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
-      {el.kind === 'transformer' && <p className="hint">Carregamento: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fmt(r.extra.loss, 3)} MW</b></p>}
+      {el.kind === 'transformer' && <p className="hint">Carregamento: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fP(r.extra.loss, 3)}</b></p>}
       <p className="hint">Em elementos de dois terminais, as grandezas são positivas entrando no elemento; o fluxo 1→2 é a P do terminal 1.</p>
     </div>
   )
@@ -1035,9 +1238,9 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
         <>
           <table className="tbl meas">
             <tbody>
-              <tr><td>Geração</td><td className="num">{fmt(t.gen)} MW · {fmt(t.genQ)} Mvar</td></tr>
-              <tr><td>Carga</td><td className="num">{fmt(t.load)} MW · {fmt(t.loadQ)} Mvar</td></tr>
-              <tr><td>Perdas (trafos)</td><td className="num">{fmt(t.loss, 3)} MW</td></tr>
+              <tr><td>Geração</td><td className="num">{fP(t.gen)} · {fQ(t.genQ)}</td></tr>
+              <tr><td>Carga</td><td className="num">{fP(t.load)} · {fQ(t.loadQ)}</td></tr>
+              <tr><td>Perdas (trafos)</td><td className="num">{fP(t.loss, 3)}</td></tr>
             </tbody>
           </table>
           {rows('bus').length > 0 && (
@@ -1047,7 +1250,7 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
                 <tbody>
                   {rows('bus').map((e) => {
                     const r = sol.res.get(e.id)
-                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? ph(r.v[0], 'kV') : 'desenergizado'}</td></tr>
+                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? fV(r.v[0], r.kvb?.[0]) : 'desenergizado'}</td></tr>
                   })}
                 </tbody>
               </table>
@@ -1060,7 +1263,7 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
                 <tbody>
                   {rows('inverter').map((e) => {
                     const r = sol.res.get(e.id)
-                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? `${fmt(r.extra.p)} MW · ${fmt(r.extra.q)} Mvar` : (r?.note ?? 'inativo')}</td></tr>
+                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? `${fP(r.extra.p)} · ${fQ(r.extra.q)}` : (r?.note ?? 'inativo')}</td></tr>
                   })}
                   {rows('battery').map((e) => {
                     const r = sol.res.get(e.id)
@@ -1084,7 +1287,7 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
         </>
       )}
       <p className="hint">
-        Modelo: regime permanente trifásico equilibrado (Sbase = 100 MVA). Fonte = tensão atrás da impedância de curto-circuito;
+        Modelo: regime permanente trifásico equilibrado (Sbase = {DISP.sbase} MVA). Fonte = tensão atrás da impedância de curto-circuito;
         carga = impedância constante na tensão nominal da zona; transformador = impedância série (sem derivação).
         Selecione um elemento para editar os parâmetros e ver os resultados.
       </p>

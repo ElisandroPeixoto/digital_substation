@@ -11,10 +11,14 @@
  *   bateria(s) ligadas ao seu lado CC; segue a rede (desliga com tensão CA < 0,1 pu). Se a ilha CA não tem fonte, o primeiro
  *   inversor apto (SOC acima do mínimo) forma a rede: fonte de tensão de 1 pu (tensão CA nominal) com 5 % de impedância interna.
  *   A bateria é estática: o SOC é um parâmetro (não evolui no tempo); o resultado mostra a corrente CC e o tempo até o limite de SOC.
+ * - Falta (opcional, `withFault`): estudo por componentes simétricas (redes de seq. positiva, negativa e zero) com a falta no terminal do
+ *   elemento Falta; ver `faultStudy` no fim do arquivo.
  */
-import { busCells, flag, isComm, num, type El, type Wire } from './model'
+import { FAULT_TYPES, busCells, flag, isComm, num, vgroup, type El, type Wire } from './model'
 
-export const SBASE = 100 // MVA
+export const DEFAULT_SBASE = 100 // MVA
+/** Potência de base (MVA) da última chamada de `solve` (módulo síncrono: ajustada no início de cada cálculo). */
+let SBASE = DEFAULT_SBASE
 const Y_SWITCH = 1e4 // pu (Z = 1e-4 pu)
 
 interface Cx { re: number; im: number }
@@ -47,6 +51,8 @@ export interface ElResult {
   extra: Record<string, number>
   /** Observação de estado (ex.: inversor limitado pelo SOC). */
   note?: string
+  /** Tensão de base (kV, fase-fase) de cada terminal, para exibir em pu. */
+  kvb?: number[]
 }
 
 export interface Solution {
@@ -54,7 +60,24 @@ export interface Solution {
   /** Nó elétrico de cada terminal (`id:índice`) e se está energizado, para colorir as ligações. */
   nodeEnergized: Map<string, boolean>
   totals: { gen: number; genQ: number; load: number; loadQ: number; loss: number }
+  /** Estudo de falta (só com `withFault` e uma Falta aplicada em ponto energizado); `res` já traz as grandezas em falta. */
+  fault?: FaultStudy | null
 }
+
+/** Fasores por fase (A, B, C) e componentes de sequência (1 = positiva, 2 = negativa, 0 = zero; valor da componente, não 3×). */
+export interface PhasorSet { a: Ph; b: Ph; c: Ph; s1: Ph; s2: Ph; s0: Ph }
+/** Em falta, por terminal do elemento: tensão fase-neutro (kV) e corrente (A, entrando no elemento; fonte: entregue). */
+export interface FaultTerm { v: PhasorSet; i: PhasorSet; kvb: number }
+export interface FaultInfo {
+  elId: number; type: number; label: string; rf: number
+  /** Corrente de falta (A) e tensão fase-neutro no ponto da falta (kV). */
+  i: PhasorSet; v: PhasorSet
+  /** Impedâncias de Thévenin vistas do ponto (Ω); z0 = null quando não há caminho de seq. zero (sem aterramento). */
+  z1: Ph; z2: Ph; z0: Ph | null
+  /** Falta em linha: nome da linha e posição (% do comprimento a partir do terminal 1). */
+  line?: { name: string; pos: number }
+}
+export interface FaultStudy { info: FaultInfo; terms: Map<number, FaultTerm[]>; warns: string[] }
 
 function zUnit(zAbs: number, xr: number): Cx {
   const r = zAbs / Math.sqrt(1 + xr * xr)
@@ -93,10 +116,12 @@ class UF {
   union(a: number, b: number) { this.p[this.find(a)] = this.find(b) }
 }
 
-interface Branch { a: number; b: number; y: Cx }
+/** `ph`: defasagem (°) do transformador (a corrente em a é y·(Va − e^{jph}·Vb)). */
+interface Branch { a: number; b: number; y: Cx; ph?: number }
 
 /** `energize` falso (simulação parada): fontes e inversores desligados, nada é energizado. */
-export function solve(allEls: El[], allWires: Wire[], energize = true): Solution {
+export function solve(allEls: El[], allWires: Wire[], energize = true, withFault = false, sbase = DEFAULT_SBASE): Solution {
+  SBASE = Number.isFinite(sbase) && sbase > 0 ? sbase : DEFAULT_SBASE
   // elementos de comunicação (IED, Rede) e suas ligações não participam do cálculo elétrico
   const comm = new Set(allEls.filter((e) => isComm(e.kind)).map((e) => e.id))
   const els = allEls.filter((e) => !comm.has(e.id) && (energize || e.kind !== 'source'))
@@ -105,7 +130,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
   const idx = new Map<string, number>()
   const elById = new Map<number, El>()
   let count = 0
-  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'battery' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : 2)
+  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'battery' || e.kind === 'fault' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : 2)
   for (const e of els) {
     elById.set(e.id, e)
     for (let k = 0; k < nPorts(e); k++) idx.set(`${e.id}:${k}`, count++)
@@ -122,7 +147,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
   // ---- conectividade por ramos fechados (disjuntor/chave fechados, TC, transformador): ilhas CA e CC
   const uc = new UF(count)
   for (const e of els) {
-    if ((e.kind === 'breaker' || e.kind === 'switch') ? flag(e, 'closed') : (e.kind === 'tc' || e.kind === 'transformer')) uc.union(node(e, 0), node(e, 1))
+    if ((e.kind === 'breaker' || e.kind === 'switch') ? flag(e, 'closed') : (e.kind === 'tc' || e.kind === 'transformer' || e.kind === 'line')) uc.union(node(e, 0), node(e, 1))
   }
 
   // ---- BESS: inversores alimentados pelas baterias da mesma ilha CC (nós ligados por disjuntores/chaves fechados).
@@ -183,7 +208,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
     adj.get(b)!.push({ to: a, ratio: 1 / ratio })
   }
   for (const e of els) {
-    if (e.kind === 'breaker' || e.kind === 'switch' || e.kind === 'tc') link(node(e, 0), node(e, 1), 1)
+    if (e.kind === 'breaker' || e.kind === 'switch' || e.kind === 'tc' || e.kind === 'line') link(node(e, 0), node(e, 1), 1)
     if (e.kind === 'transformer') {
       const v1 = Math.max(num(e, 'v1'), 1e-6)
       link(node(e, 0), node(e, 1), Math.max(num(e, 'v2'), 1e-6) / v1)
@@ -212,6 +237,8 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
   const addInj = (n: number, i: Cx) => inj.set(n, add(inj.get(n) ?? cx(), i))
   const sources: { e: El; n: number; ys: Cx; E: Cx }[] = []
   const trafoY = new Map<number, Cx>()
+  /** Linha: impedâncias série (pu) de sequência positiva/negativa (z1) e zero (z0). */
+  const lineZ = new Map<number, { z1: Cx; z0: Cx }>()
   const loadY = new Map<number, Cx>()
 
   for (const e of els) {
@@ -225,7 +252,18 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
       const zAbs = (Math.max(num(e, 'z'), 1e-4) / 100) * (SBASE / Math.max(num(e, 'sn'), 1e-6)) * Math.pow(Math.max(num(e, 'v1'), 1e-6) / ba, 2)
       const y = div(cx(1), zUnit(zAbs, Math.max(num(e, 'xr'), 0)))
       trafoY.set(e.id, y)
-      branches.push({ a, b: node(e, 1), y })
+      branches.push({ a, b: node(e, 1), y, ph: trafoShift(e) })
+    } else if (e.kind === 'line') {
+      const a = node(e, 0)
+      const zb = (bk(a) * bk(a)) / SBASE
+      if (zb > 0) {
+        const len = Math.max(num(e, 'len'), 1e-6)
+        const z1 = cx((len * num(e, 'r1')) / zb, (len * num(e, 'x1')) / zb)
+        const z0 = cx((len * num(e, 'r0')) / zb, (len * num(e, 'x0')) / zb)
+        const zmin = (z: Cx) => (abs(z) < 1e-9 ? cx(1e-6, 0) : z)
+        lineZ.set(e.id, { z1: zmin(z1), z0: zmin(z0) })
+        branches.push({ a, b: node(e, 1), y: div(cx(1), zmin(z1)) })
+      }
     } else if (e.kind === 'source') {
       const n = node(e, 0)
       const vkv = Math.max(num(e, 'vkv'), 1e-6)
@@ -275,10 +313,11 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
       const i = pos.get(b.a)
       const j = pos.get(b.b)
       if (i == null || j == null) continue
+      const sh = b.ph ? polar(1, b.ph) : cx(1)
       Y[i][i] = add(Y[i][i], b.y)
       Y[j][j] = add(Y[j][j], b.y)
-      Y[i][j] = sub(Y[i][j], b.y)
-      Y[j][i] = sub(Y[j][i], b.y)
+      Y[i][j] = sub(Y[i][j], mul(b.y, sh))
+      Y[j][i] = sub(Y[j][i], mul(b.y, conj(sh)))
     }
     const x = gauss(Y, I)
     nodes.forEach((n, i) => V.set(n, x[i]))
@@ -351,7 +390,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
     const r: ElResult = { energized: false, v: [], i: [], p: [], q: [], extra: {} }
     const n0 = node(e, 0)
     r.energized = abs(vOf(n0)) > 1e-6 || (nPorts(e) > 1 && abs(vOf(node(e, 1))) > 1e-6)
-    if (e.kind === 'bus') {
+    if (e.kind === 'bus' || e.kind === 'fault') {
       r.v = [kv(n0)]
     } else if (e.kind === 'source') {
       const s = sources.find((x) => x.e.id === e.id)!
@@ -408,11 +447,12 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
     } else {
       // dois terminais em série: breaker, switch, tc, transformer
       const n1 = node(e, 1)
-      const closed = e.kind === 'tc' || e.kind === 'transformer' || flag(e, 'closed')
-      let y = e.kind === 'transformer' ? trafoY.get(e.id)! : cx(closed ? Y_SWITCH : 0)
-      if (e.kind === 'transformer' && abs(vOf(n0)) < 1e-9 && abs(vOf(n1)) < 1e-9) y = cx()
-      const i1 = mul(sub(vOf(n0), vOf(n1)), y) // entrando pelo terminal 1
-      const i2 = cx(-i1.re, -i1.im)
+      const closed = e.kind === 'tc' || e.kind === 'transformer' || e.kind === 'line' || flag(e, 'closed')
+      let y = e.kind === 'transformer' ? trafoY.get(e.id)! : e.kind === 'line' ? (lineZ.has(e.id) ? div(cx(1), lineZ.get(e.id)!.z1) : cx()) : cx(closed ? Y_SWITCH : 0)
+      if ((e.kind === 'transformer' || e.kind === 'line') && abs(vOf(n0)) < 1e-9 && abs(vOf(n1)) < 1e-9) y = cx()
+      const sh = e.kind === 'transformer' ? polar(1, trafoShift(e)) : cx(1)
+      const i1 = mul(sub(vOf(n0), mul(sh, vOf(n1))), y) // entrando pelo terminal 1
+      const i2 = e.kind === 'transformer' ? sub(cx(), mul(i1, conj(sh))) : cx(-i1.re, -i1.im)
       r.v = [kv(n0), kv(n1)]
       r.i = [amps(n0, i1), amps(n1, i2)]
       const [p1, q1] = sFlow(n0, i1)
@@ -421,6 +461,10 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
       if (e.kind === 'tc') {
         const ratio = Math.max(num(e, 'ip'), 1e-9) / Math.max(num(e, 'is'), 1e-9)
         r.extra = { isec: r.i[0].mag / ratio, ratio }
+      } else if (e.kind === 'line') {
+        const len = Math.max(num(e, 'len'), 1e-6)
+        r.extra = { len, rt: len * num(e, 'r1'), xt: len * num(e, 'x1'), loss: p1 + p2 }
+        totals.loss += p1 + p2
       } else if (e.kind === 'transformer') {
         r.extra = { loading: (Math.hypot(p1, q1) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss: p1 + p2 }
         totals.loss += p1 + p2
@@ -441,7 +485,363 @@ export function solve(allEls: El[], allWires: Wire[], energize = true): Solution
       if (r.extra.dc && !dcDeclared) r.note = `${e.kind === 'breaker' ? 'disjuntor' : 'chave'} marcado como CA em circuito CC`
       else if (!r.extra.dc && r.energized && dcDeclared) r.note = `${e.kind === 'breaker' ? 'disjuntor' : 'chave'} marcado como CC em circuito CA`
     }
+    r.kvb = Array.from({ length: nPorts(e) }, (_, k) => bk(node(e, k)))
     res.set(e.id, r)
   }
-  return { res, nodeEnergized, totals }
+  const out: Solution = { res, nodeEnergized, totals }
+  if (withFault && energize) {
+    const fr = faultStudy({ els, node, nodes: [...allNodes], bk, sources, loadY, trafoY, lineZ, invs, iBase }, res)
+    if (fr) {
+      out.res = new Map([...res, ...fr.over])
+      // totais do sistema em falta
+      const t = { gen: 0, genQ: 0, load: 0, loadQ: 0, loss: 0 }
+      for (const e of els) {
+        const r = out.res.get(e.id)
+        if (!r) continue
+        if (e.kind === 'source') { t.gen += r.extra.p; t.genQ += r.extra.q }
+        else if (e.kind === 'load' && r.energized) { t.load += r.extra.p; t.loadQ += r.extra.q }
+        else if (e.kind === 'transformer') t.loss += r.extra.loss ?? 0
+        else if (e.kind === 'inverter' && r.energized) { if (r.extra.p >= 0) t.gen += r.extra.p; else t.load += -r.extra.p; t.genQ += r.extra.q }
+      }
+      out.totals = t
+      out.fault = { info: fr.info, terms: fr.terms, warns: fr.warns }
+    } else out.fault = null
+  }
+  return out
+}
+
+// ===================================================================== estudo de falta (componentes simétricas)
+
+interface FaultCtx {
+  els: El[]
+  node: (e: El, k: number) => number
+  nodes: number[]
+  bk: (n: number) => number
+  sources: { e: El; n: number; ys: Cx; E: Cx }[]
+  loadY: Map<number, Cx>
+  trafoY: Map<number, Cx>
+  lineZ: Map<number, { z1: Cx; z0: Cx }>
+  invs: { e: El; nAc: number; active: boolean; forming: boolean; ys: Cx; E: Cx; p: number; q: number }[]
+  iBase: (n: number) => number
+}
+
+const A1 = polar(1, 120) // operador a
+const A2 = polar(1, 240) // a²
+const LEAK = 1e-9        // admitância de fuga à terra: mantém a matriz inversível em partes sem referência (ex.: sem aterramento)
+
+/** Defasagem (°) da sequência positiva do terminal 2 em relação ao 1 (índice horário × 30°; a tensão do terminal 2 atrasa); a negativa tem o sinal oposto. */
+function trafoShift(e: El): number {
+  return vgroup(e).clock * 30
+}
+/** Tipo de enrolamento de cada terminal pelo esquema de ligação: 0 = Y isolado, 1 = Δ, 2 = Y aterrado. */
+function windings(e: El): [number, number] {
+  const g = vgroup(e)
+  const t = (w: string) => (w.toUpperCase() === 'D' ? 1 : w.toUpperCase().startsWith('YN') ? 2 : 0)
+  return [t(g.hv), t(g.lv)]
+}
+const srcGrounded = (e: El): boolean => flag(e, 'gnd')
+const z0Ratio = (e: El): number => Math.max(num(e, 'z0r') || 1, 1e-3)
+const rot3 = (k: number): Cx => { const m = ((k % 3) + 3) % 3; return m === 0 ? cx(1) : m === 1 ? A1 : A2 }
+
+interface SeqI { i1: Cx; i2: Cx; i0: Cx }
+
+function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultInfo; terms: Map<number, FaultTerm[]>; warns: string[]; over: Map<number, ElResult> } | null {
+  const { els, node, bk: bk0, sources, loadY, trafoY, lineZ, invs, iBase: iBase0 } = ctx
+  const faults = els.filter((e) => e.kind === 'fault' && flag(e, 'on'))
+  if (faults.length === 0) return null
+  const warns: string[] = []
+  const fe = faults[0]
+  if (faults.length > 1) warns.push(`Mais de uma falta aplicada: só a primeira (${fe.name}) é calculada.`)
+  // falta em uma linha: o ponto fica a `pos`% do terminal 1; a linha é dividida em dois trechos por um nó interno
+  const fl = els.find((e) => e.kind === 'line' && e.id === Math.round(num(fe, 'lid')))
+  const posFrac = Math.min(0.9999, Math.max(0.0001, num(fe, 'pos') / 100))
+  const mid = ctx.nodes.length ? Math.max(...ctx.nodes) + 1 : 0
+  const nodes = fl ? [...ctx.nodes, mid] : ctx.nodes
+  const f = fl ? mid : node(fe, 0)
+  const bk = (n: number) => (n === mid && fl ? bk0(node(fl, 0)) : bk0(n))
+  const iBase = (n: number) => (n === mid && fl ? iBase0(node(fl, 0)) : iBase0(n))
+  if (!(bk(f) > 0)) return null
+  const N = nodes.length
+  const pos = new Map(nodes.map((n, i) => [n, i]))
+  const fi = pos.get(f)!
+
+  /** Rede de sequência `seq` (1, 2 ou 0): matriz Y e injeções de Norton (só a positiva tem fontes). */
+  const net = (seq: 1 | 2 | 0) => {
+    const Y: Cx[][] = Array.from({ length: N }, () => Array.from({ length: N }, () => cx()))
+    const I: Cx[] = Array.from({ length: N }, () => cx())
+    for (let i = 0; i < N; i++) Y[i][i] = cx(LEAK)
+    const stamp = (a: number, b: number, y: Cx, alphaDeg = 0) => {
+      const i = pos.get(a)!
+      const j = pos.get(b)!
+      const ph = polar(1, alphaDeg)
+      Y[i][i] = add(Y[i][i], y)
+      Y[j][j] = add(Y[j][j], y)
+      Y[i][j] = sub(Y[i][j], mul(y, ph))
+      Y[j][i] = sub(Y[j][i], mul(y, conj(ph)))
+    }
+    const shunt = (n: number, y: Cx) => { const i = pos.get(n)!; Y[i][i] = add(Y[i][i], y) }
+    const inject = (n: number, c: Cx) => { const i = pos.get(n)!; I[i] = add(I[i], c) }
+    for (const e of els) {
+      if (e.kind === 'breaker' || e.kind === 'switch') {
+        if (flag(e, 'closed')) stamp(node(e, 0), node(e, 1), cx(Y_SWITCH))
+      } else if (e.kind === 'tc') {
+        stamp(node(e, 0), node(e, 1), cx(Y_SWITCH))
+      } else if (e.kind === 'transformer') {
+        const y = trafoY.get(e.id)!
+        const a = node(e, 0)
+        const b = node(e, 1)
+        if (seq === 0) {
+          const [wa, wb] = windings(e)
+          const ga = wa === 2
+          const gb = wb === 2
+          const da = wa === 1
+          const db = wb === 1
+          if (ga && gb) stamp(a, b, y)
+          else if (ga && db) shunt(a, y)
+          else if (gb && da) shunt(b, y)
+        } else stamp(a, b, y, seq === 1 ? trafoShift(e) : -trafoShift(e))
+      } else if (e.kind === 'load' && seq !== 0) {
+        shunt(node(e, 0), loadY.get(e.id)!)
+      } else if (e.kind === 'line') {
+        const lz = lineZ.get(e.id)
+        if (lz) {
+          const z = seq === 0 ? lz.z0 : lz.z1
+          const a = node(e, 0)
+          const b = node(e, 1)
+          if (e === fl) {
+            stamp(a, mid, div(cx(1), mul(z, cx(posFrac))))
+            stamp(mid, b, div(cx(1), mul(z, cx(1 - posFrac))))
+          } else stamp(a, b, div(cx(1), z))
+        }
+      }
+    }
+    for (const s of sources) {
+      if (seq === 0) {
+        if (srcGrounded(s.e)) shunt(s.n, div(s.ys, cx(z0Ratio(s.e))))
+      } else {
+        shunt(s.n, s.ys)
+        if (seq === 1) inject(s.n, mul(s.E, s.ys))
+      }
+    }
+    for (const v of invs) {
+      if (v.forming && seq !== 0) {
+        shunt(v.nAc, v.ys)
+        if (seq === 1) inject(v.nAc, mul(v.E, v.ys))
+      }
+    }
+    return { Y, I }
+  }
+  const n1 = net(1)
+  const n2 = net(2)
+  const n0 = net(0)
+
+  // ---- seq. positiva pré-falta; inversores seguidores = corrente constante (iterada)
+  const inj = new Map<number, Cx>()
+  const solvePos = () => {
+    const I = n1.I.map((c) => ({ ...c }))
+    for (const [n, c] of inj) { const i = pos.get(n)!; I[i] = add(I[i], c) }
+    return gauss(n1.Y, I)
+  }
+  let V1 = solvePos()
+  const followers = invs.filter((v) => v.active && !v.forming)
+  for (let it = 0; it < 20 && followers.length; it++) {
+    inj.clear()
+    for (const v of followers) {
+      const Vn = V1[pos.get(v.nAc)!]
+      if (abs(Vn) < 0.1) continue
+      inj.set(v.nAc, add(inj.get(v.nAc) ?? cx(), conj(div(cx(v.p / SBASE, v.q / SBASE), Vn))))
+    }
+    const nv = solvePos()
+    const done = nv.every((x, k) => abs(sub(x, V1[k])) < 1e-9)
+    V1 = nv
+    if (done) break
+  }
+  const vpre = V1[fi]
+  if (abs(vpre) < 1e-6) return null
+
+  // ---- impedâncias de Thévenin e colunas Z (resposta a 1 pu injetado no ponto da falta)
+  const unit = Array.from({ length: N }, (_, i) => (i === fi ? cx(1) : cx()))
+  const X1 = gauss(n1.Y, unit)
+  const X2 = gauss(n2.Y, unit)
+  const X0 = gauss(n0.Y, unit)
+  const Z1 = X1[fi]
+  const Z2 = X2[fi]
+  const Z0 = X0[fi]
+  const z0open = abs(Z0) > 1e4
+  const zBase = (bk(f) * bk(f)) / SBASE
+  const rf = Math.max(num(fe, 'rf'), 0)
+  const zf = rf / zBase
+  const ftype = Math.round(num(fe, 'type'))
+  const label = FAULT_TYPES.find((t) => t.v === ftype)?.l ?? 'Falta'
+  // fase de referência (s): falta à terra = a faltada (A,B,C = 0,1,2); entre fases e bifásica-terra = a não envolvida (AB → C, BC → A, CA → B)
+  const sIdx = ftype === 0 ? 0 : ftype <= 3 ? ftype - 1 : ftype <= 6 ? [2, 0, 1][ftype - 4] : [2, 0, 1][ftype - 7]
+  let I1: Cx = cx()
+  let c2: Cx = cx()
+  let c0: Cx = cx()
+  const Z0f = add(Z0, cx(3 * zf))
+  if (ftype === 0) {
+    I1 = div(vpre, add(Z1, cx(zf)))
+  } else if (ftype <= 3) {
+    I1 = div(vpre, add(add(Z1, Z2), Z0f))
+    c2 = cx(1)
+    c0 = cx(1)
+  } else if (ftype <= 6) {
+    I1 = div(vpre, add(add(Z1, Z2), cx(zf)))
+    c2 = cx(-1)
+  } else {
+    const den = add(Z2, Z0f)
+    I1 = div(vpre, add(Z1, div(mul(Z2, Z0f), den)))
+    c2 = sub(cx(), div(Z0f, den))
+    c0 = sub(cx(), div(Z2, den))
+  }
+  const I2 = mul(mul(c2, I1), rot3(sIdx))
+  const I0 = mul(mul(c0, I1), rot3(-sIdx))
+  if (z0open && ftype >= 1 && ftype <= 3) warns.push('Sem caminho de sequência zero (sem aterramento até o ponto): a falta monofásica não produz corrente.')
+  else if (z0open && ftype >= 7) warns.push('Sem caminho de sequência zero: a falta bifásica com neutro se comporta como bifásica.')
+
+  // ---- tensões de sequência em todos os nós (superposição) e correntes dos elementos
+  const vs = (n: number) => {
+    const i = pos.get(n)!
+    return { v1: sub(V1[i], mul(X1[i], I1)), v2: sub(cx(), mul(X2[i], I2)), v0: sub(cx(), mul(X0[i], I0)) }
+  }
+  const toPh = (v1: Cx, v2: Cx, v0: Cx) => ({
+    a: add(add(v0, v1), v2),
+    b: add(add(v0, mul(A2, v1)), mul(A1, v2)),
+    c: add(add(v0, mul(A1, v1)), mul(A2, v2)),
+  })
+  const mk = (c: Cx, k: number): Ph => ({ mag: abs(c) * k, ang: deg(c) })
+  const setOf = (q1: Cx, q2: Cx, q0: Cx, k: number): PhasorSet => {
+    const p = toPh(q1, q2, q0)
+    return { a: mk(p.a, k), b: mk(p.b, k), c: mk(p.c, k), s1: mk(q1, k), s2: mk(q2, k), s0: mk(q0, k) }
+  }
+  const llMin = (q1: Cx, q2: Cx, q0: Cx): number => {
+    const p = toPh(q1, q2, q0)
+    return Math.min(abs(sub(p.a, p.b)), abs(sub(p.b, p.c)), abs(sub(p.c, p.a)))
+  }
+  const maxI = (s: PhasorSet): Ph => [s.a, s.b, s.c].reduce((m, x) => (x.mag > m.mag ? x : m))
+  /** S trifásica (MW, Mvar) = Σ V_seq · conj(I_seq) em pu × Sbase. */
+  const sMW = (v: { v1: Cx; v2: Cx; v0: Cx }, i: SeqI): [number, number] => {
+    const s = add(add(mul(v.v1, conj(i.i1)), mul(v.v2, conj(i.i2))), mul(v.v0, conj(i.i0)))
+    return [s.re * SBASE, s.im * SBASE]
+  }
+
+  const terms = new Map<number, FaultTerm[]>()
+  const over = new Map<number, ElResult>()
+  const zero: SeqI = { i1: cx(), i2: cx(), i0: cx() }
+  for (const e of els) {
+    const b0 = base.get(e.id)
+    if (!b0 || e.kind === 'battery' || e.kind === 'ied') continue
+    const ports = e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'fault' || e.kind === 'bus' ? 1 : 2
+    const nodesOf = e.id === fe.id && fl ? [mid] : Array.from({ length: ports }, (_, k) => node(e, k))
+    const V = nodesOf.map((n) => vs(n))
+    let I: SeqI[] = V.map(() => zero)
+    if (e.kind === 'breaker' || e.kind === 'switch' || e.kind === 'tc') {
+      if (e.kind === 'tc' || flag(e, 'closed')) {
+        const y = cx(Y_SWITCH)
+        const ia: SeqI = { i1: mul(sub(V[0].v1, V[1].v1), y), i2: mul(sub(V[0].v2, V[1].v2), y), i0: mul(sub(V[0].v0, V[1].v0), y) }
+        I = [ia, { i1: sub(cx(), ia.i1), i2: sub(cx(), ia.i2), i0: sub(cx(), ia.i0) }]
+      }
+    } else if (e.kind === 'transformer') {
+      const y = trafoY.get(e.id)!
+      const al = trafoShift(e)
+      const a = V[0]
+      const b = V[1]
+      const ejp = polar(1, al)
+      const ejn = polar(1, -al)
+      const p1 = mul(y, sub(a.v1, mul(ejp, b.v1)))
+      const p2 = mul(y, sub(a.v2, mul(ejn, b.v2)))
+      const [wa, wb] = windings(e)
+      const ga = wa === 2
+      const gb = wb === 2
+      const da = wa === 1
+      const db = wb === 1
+      let z0a = cx()
+      let z0b = cx()
+      if (ga && gb) { z0a = mul(y, sub(a.v0, b.v0)); z0b = sub(cx(), z0a) }
+      else if (ga && db) z0a = mul(y, a.v0)
+      else if (gb && da) z0b = mul(y, b.v0)
+      I = [{ i1: p1, i2: p2, i0: z0a }, { i1: sub(cx(), mul(p1, ejn)), i2: sub(cx(), mul(p2, ejp)), i0: z0b }]
+    } else if (e.kind === 'source') {
+      const s = sources.find((x) => x.e.id === e.id)!
+      const v = V[0]
+      I = [{
+        i1: mul(sub(s.E, v.v1), s.ys),
+        i2: sub(cx(), mul(v.v2, s.ys)),
+        i0: srcGrounded(e) ? sub(cx(), mul(v.v0, div(s.ys, cx(z0Ratio(e))))) : cx(),
+      }]
+    } else if (e.kind === 'load') {
+      const y = loadY.get(e.id)!
+      I = [{ i1: mul(V[0].v1, y), i2: mul(V[0].v2, y), i0: cx() }]
+    } else if (e.kind === 'line') {
+      const lz = lineZ.get(e.id)
+      if (lz) {
+        const ya = (z: Cx) => div(cx(1), e === fl ? mul(z, cx(posFrac)) : z)
+        const yb = (z: Cx) => div(cx(1), e === fl ? mul(z, cx(1 - posFrac)) : z)
+        const vm = e === fl ? vs(mid) : null
+        const sec = (z: Cx, qa: Cx, qb: Cx, qm: Cx | undefined): [Cx, Cx] => {
+          if (qm) return [mul(ya(z), sub(qa, qm)), mul(yb(z), sub(qb, qm))]
+          const i = mul(ya(z), sub(qa, qb))
+          return [i, sub(cx(), i)]
+        }
+        const [a1, b1] = sec(lz.z1, V[0].v1, V[1].v1, vm?.v1)
+        const [a2, b2] = sec(lz.z1, V[0].v2, V[1].v2, vm?.v2)
+        const [a0, b0] = sec(lz.z0, V[0].v0, V[1].v0, vm?.v0)
+        I = [{ i1: a1, i2: a2, i0: a0 }, { i1: b1, i2: b2, i0: b0 }]
+      }
+    } else if (e.kind === 'fault') {
+      I = [e.id === fe.id ? { i1: I1, i2: I2, i0: I0 } : zero]
+    } else if (e.kind === 'inverter') {
+      const v = invs.find((x) => x.e.id === e.id)!
+      const ac = V[1]
+      let i1 = cx()
+      let i2 = cx()
+      if (v.active && v.forming) { i1 = sub(cx(), mul(sub(v.E, ac.v1), v.ys)); i2 = mul(ac.v2, v.ys) }
+      else if (v.active) i1 = sub(cx(), inj.get(v.nAc) ?? cx())
+      I = [zero, { i1, i2, i0: cx() }]
+    }
+    const ts: FaultTerm[] = nodesOf.map((n, k) => ({
+      v: setOf(V[k].v1, V[k].v2, V[k].v0, bk(n) / Math.sqrt(3)),
+      i: setOf(I[k].i1, I[k].i2, I[k].i0, iBase(n)),
+      kvb: bk(n),
+    }))
+    terms.set(e.id, ts)
+    // ---- ElResult compatível com painel/diagrama: tensão = menor fase-fase; corrente = maior fase
+    const r: ElResult = { ...b0, v: [...b0.v], i: [...b0.i], p: [...b0.p], q: [...b0.q], extra: { ...b0.extra } }
+    r.v = nodesOf.map((n, k) => ({ mag: llMin(V[k].v1, V[k].v2, V[k].v0) * bk(n), ang: ts[k].v.a.ang }))
+    r.i = ts.map((t) => maxI(t.i))
+    if (e.kind === 'inverter') r.i = [{ mag: 0, ang: 0 }, maxI(ts[1].i)]
+    if (e.kind !== 'bus' && e.kind !== 'tp' && e.kind !== 'fault') {
+      const pq = nodesOf.map((_, k) => sMW(V[k], I[k]))
+      if (e.kind === 'source') {
+        r.p = [-pq[0][0]]; r.q = [-pq[0][1]]
+        r.extra = { ...r.extra, p: pq[0][0], q: pq[0][1] }
+      } else if (e.kind === 'inverter') {
+        r.p = [r.p[0] ?? 0, pq[1][0]]; r.q = [0, pq[1][1]]
+        r.extra = { ...r.extra, p: -pq[1][0], q: -pq[1][1] }
+      } else {
+        r.p = pq.map((x) => x[0]); r.q = pq.map((x) => x[1])
+      }
+      if (e.kind === 'load') r.extra = { ...r.extra, p: pq[0][0], q: pq[0][1] }
+      if (e.kind === 'transformer') r.extra = { ...r.extra, loading: (Math.hypot(pq[0][0], pq[0][1]) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss: pq[0][0] + pq[1][0] }
+    }
+    if (e.kind === 'line') r.extra = { ...r.extra, loss: r.p[0] + r.p[1] }
+    if (e.kind === 'tc') {
+      const ratio = Math.max(num(e, 'ip'), 1e-9) / Math.max(num(e, 'is'), 1e-9)
+      r.extra = { ...r.extra, isec: r.i[0].mag / ratio, ratio }
+    }
+    if (e.kind === 'tp') {
+      const vp = Math.max(num(e, 'vp'), 1e-9)
+      r.extra = { ...r.extra, vsec: (r.v[0].mag / vp) * num(e, 'vs') }
+    }
+    if (e.kind === 'fault') {
+      r.extra = { ...r.extra, ifault: e.id === fe.id ? maxI(ts[0].i).mag : 0 }
+      r.energized = true
+      if (e.id === fe.id) r.note = label
+    }
+    over.set(e.id, r)
+  }
+  const fterm = terms.get(fe.id)![0]
+  const zOhm = (z: Cx): Ph => ({ mag: abs(z) * zBase, ang: deg(z) })
+  const info: FaultInfo = { elId: fe.id, type: ftype, label, rf, i: fterm.i, v: fterm.v, z1: zOhm(Z1), z2: zOhm(Z2), z0: z0open ? null : zOhm(Z0), ...(fl ? { line: { name: fl.name, pos: Math.min(100, Math.max(0, num(fe, 'pos'))) } } : {}) }
+  return { info, terms, warns, over }
 }
