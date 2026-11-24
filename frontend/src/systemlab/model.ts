@@ -22,7 +22,9 @@ export interface El {
   sid?: string
   rname?: string
   /** IED: elementos do diagrama monitorados/alimentando o relé (ids): disjuntor, TC (correntes) e TP (tensões). */
-  links?: { breaker?: number; tc?: number; tp?: number; tps?: number }
+  links?: { breaker?: number; tc?: number; tc2?: number; tc3?: number; tp?: number; tps?: number }
+  /** IED: modelo do relé ('751', '787' ou '2440'); no 787 o TC (W1) e os TC2/TC3 alimentam os enrolamentos 1 a 3. */
+  model?: string
   /** IED: atalhos exibidos no painel flutuante, posição do painel (px no canvas) e se está expandido. */
   sc?: Shortcut[]
   /** Elemento Texto: conteúdo (várias linhas separadas por \n). */

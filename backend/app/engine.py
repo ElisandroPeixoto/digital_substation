@@ -117,7 +117,8 @@ def _names_2440() -> list[str]:
 class RelayEngine:
     def __init__(self, settings: RelaySettings, device_name: str = "") -> None:
         self.settings = settings
-        self.model = "2440" if "2440" in settings.header.get("RELAYTYPE", "").upper() else "751"
+        rt = settings.header.get("RELAYTYPE", "").upper()
+        self.model = "2440" if "2440" in rt else "787" if "787" in rt else "751"
         self.fixed: dict[str, bool] = {}          # bits VB/CB/RB mantidos pelo usuário (set/clear)
         self.forced: dict[str, float] = {}        # variáveis lógicas forçadas pelo usuário (valor fixo até liberar)
         self.ext_bits: dict[str, bool] = {}       # VBs escritos pela rede GOOSE (módulo IEC61850)
@@ -225,8 +226,8 @@ class RelayEngine:
         if self.model == "2440" and "L" in st.sections:
             self.logic_cls = "L"
         self.l = st.sections.get(self.logic_cls, {})
-        self.ctr = st.number(self.group_cls, "CTR", 1.0) or 1.0
-        self.ctrn = st.number(self.group_cls, "CTRN", self.ctr) or self.ctr
+        self.ctr = st.number(self.group_cls, "CTR", st.number(self.group_cls, "CTR1", 1.0) or 1.0) or 1.0   # SEL-787: CTR1 (enrolamento 1)
+        self.ctrn = st.number(self.group_cls, "CTRN", st.number(self.group_cls, "CTRN1", self.ctr) or self.ctr) or self.ctr
         self.ptr = st.number(self.group_cls, "PTR", 1.0) or 1.0
         self.ptrs = st.number(self.group_cls, "PTRS", self.ptr) or self.ptr
         self.vnom = st.number(self.group_cls, "VNOM", 115.0) or 115.0
@@ -428,6 +429,18 @@ class RelayEngine:
         if inp.name == self.bk_input and self.field.cfg.breaker_auto:
             return self.field.breaker.closed
         return inp.raw
+
+    def local_breaker(self, closed: bool) -> None:
+        """Manobra local do disjuntor (ex.: SystemLab): move só a posição física. Não passa pelo relé: não aciona
+        TRIP/CLOSE nem saídas, não gera partida do 79 e cancela qualquer comando de abertura/fechamento em curso
+        (inclusive religamento pendente), para que o relé não reaja à manobra com uma saída."""
+        self.field.force_position(closed)
+        self._rc_request = False
+        self.vals["CLOSE"] = 0.0
+        self.close_timer = 0.0
+        if self.rc.state == "CY":                      # ciclo de religamento interrompido pela manobra manual
+            self.rc.state, self.rc.rs, self.rc.oi = "LO", 0.0, 0.0
+            self.rc.last_event = "manobra local do disjuntor"
 
     def set_input(self, name: str, value: bool) -> None:
         name = name.upper()

@@ -19,11 +19,20 @@ if TYPE_CHECKING:  # pragma: no cover
 _EPS = 1e-9
 _HYST = 0.95
 
-QTY_LABEL = {
+class _QtyLabel(dict):
+    """Rótulos das grandezas; no SEL-787 as chaves por enrolamento (``W2_IG``, ``IN1``) são derivadas das base."""
+
+    def __missing__(self, key: str) -> str:
+        if key.startswith("W") and "_" in key:
+            return f"{dict.__getitem__(self, key.split('_', 1)[1])} (W{key[1]})"
+        return {"IN1": "corrente de neutro (IN1)"}.get(key, key)
+
+
+QTY_LABEL = _QtyLabel({
     "IMAX": "máx. corrente de fase", "IA": "corrente fase A", "IB": "corrente fase B",
     "IC": "corrente fase C", "IN": "corrente de neutro (IN)", "IG": "corrente residual (IG)",
     "I2": "3I2 (seq. negativa)",
-}
+})
 _INST_QTY = {"P": "IMAX", "N": "IN", "G": "IG", "Q": "I2"}
 _TIME_QTY = {"A": "IA", "B": "IB", "C": "IC", "P": "IMAX", "Q": "I2", "N": "IN", "G": "IG"}
 
@@ -270,7 +279,7 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
 
     for key in st.sections[gcls]:
         # registra os bits (mesmo com o elemento desabilitado) para que as equações os enxerguem
-        if _RE_INST.match(key) or _RE_TIME.match(key):
+        if eng.model != "787" and (_RE_INST.match(key) or _RE_TIME.match(key)):
             eng.vals.setdefault(key, 0.0)
             eng.vals.setdefault(key[:-1] + "T", 0.0)
             if _RE_TIME.match(key):
@@ -287,7 +296,7 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
         elif _RE_FREQ.match(key):
             eng.vals.setdefault(key[:-2], 0.0)
             eng.vals.setdefault(key[:-2] + "T", 0.0)
-        m = _RE_INST.match(key)
+        m = None if eng.model == "787" else _RE_INST.match(key)
         if m:
             pickup = num(key)
             if pickup is None or pickup <= 0:
@@ -301,7 +310,7 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
             el.dir_key = f"{m.group(1)}{m.group(2)}DIR"       # nível n: DIRn (P/N/G/Q)
             elements.append(el)
             continue
-        m = _RE_TIME.match(key)
+        m = None if eng.model == "787" else _RE_TIME.match(key)        # SEL-787: 50/51 por enrolamento em protection_787.py
         if m:
             pickup = num(key)
             if pickup is None or pickup <= 0:
@@ -338,6 +347,11 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
     eng.vals.setdefault("ORED50T", 0.0)
     eng.vals.setdefault("ORED51T", 0.0)
     elements += build_extra(eng)
+    if eng.model == "787":
+        from .protection_787 import build_787
+
+        e787, o787 = build_787(eng)
+        return elements + e787, off + o787
     return elements, off
 
 

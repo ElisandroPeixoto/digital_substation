@@ -16,6 +16,8 @@ export function injectionUrl(sid: string): string {
   return `${window.location.origin}${window.location.pathname}#/injecao/${sid}`
 }
 
+const kn_sec = (ctrn: number) => 1 / ctrn
+
 function SeqRow({ label, i, v, iu, vu }: { label: string; i: Polar; v: Polar; iu: string; vu: string }) {
   return (
     <tr>
@@ -46,9 +48,9 @@ export function InjectionWindow({ sid }: { sid: string }) {
   }, [error])
 
   useEffect(() => {
-    document.title = 'Injeção de corrente e tensão – SEL-751'
+    document.title = `Injeção de corrente e tensão – ${info?.model === '787' ? 'SEL-787' : 'SEL-751'}`
     api.getSession(sid).then(setInfo).catch((e) => setErr(e instanceof Error ? e.message : String(e)))
-  }, [sid])
+  }, [sid, info?.model])
 
   const setMode = (m: Mode) => {
     setModeState(m)
@@ -83,7 +85,9 @@ export function InjectionWindow({ sid }: { sid: string }) {
   const vsU = sec ? 'V sec.' : 'V prim.'
   const iu = sec ? 'A sec.' : 'A prim.'
   const vu = sec ? 'V sec.' : 'V prim.'
-  const num = (k: string) => sim[k as keyof SimConfig] as number
+  const num = (k: string) => (sim as unknown as Record<string, number>)[k]
+  const is787 = info.model === '787'
+  const windings = info.windings ?? [1, 2]
   const patch = (p: Record<string, number | boolean | string | null>) =>
     api.sim(sid, p as Partial<SimConfig>).then(() => setErr(null)).catch((e) => setErr(e instanceof Error ? e.message : String(e)))
 
@@ -92,18 +96,19 @@ export function InjectionWindow({ sid }: { sid: string }) {
   const iSeq = sequence(iPolar[0], iPolar[1], iPolar[2])
   const vSeq = sequence(vPolar[0], vPolar[1], vPolar[2])
 
-  const balance = (kind: 'i' | 'v') => {
-    const mag = num(`${kind}a_mag`)
-    const ang = num(`${kind}a_ang`)
+  const balance = (kind: 'i' | 'v', pre = '') => {
+    const mag = num(`${pre}${kind}a_mag`)
+    const ang = num(`${pre}${kind}a_ang`)
     patch({
-      [`${kind}b_mag`]: mag, [`${kind}b_ang`]: normAngle(ang - 120),
-      [`${kind}c_mag`]: mag, [`${kind}c_ang`]: normAngle(ang + 120),
+      [`${pre}${kind}b_mag`]: mag, [`${pre}${kind}b_ang`]: normAngle(ang - 120),
+      [`${pre}${kind}c_mag`]: mag, [`${pre}${kind}c_ang`]: normAngle(ang + 120),
     })
   }
 
-  const phaseTable = (kind: 'i' | 'v') => {
-    const k1 = kind === 'i' ? ki : kv
-    const other = kind === 'i' ? info.ctr : info.ptr
+  // pre: prefixo da chave de simulação ('' = enrolamento 1 / tensões; 'w2' = enrolamento 2 ...); ctr: relação do TC do enrolamento
+  const phaseTable = (kind: 'i' | 'v', pre = '', ctr = info.ctr) => {
+    const k1 = kind === 'i' ? (sec ? 1 / ctr : 1) : kv
+    const other = kind === 'i' ? ctr : info.ptr
     return (
       <table className="tbl inj-tbl">
         <thead>
@@ -117,17 +122,17 @@ export function InjectionWindow({ sid }: { sid: string }) {
         <tbody>
           {PH.map((ph) => {
             const k = ph.toLowerCase()
-            const magP = num(`${kind}${k}_mag`)
+            const magP = num(`${pre}${kind}${k}_mag`)
             return (
               <tr key={ph}>
                 <td><b style={{ color: COLORS[ph] }}>{kind.toUpperCase()}{ph}</b></td>
                 <td>
                   <NumInput label={`Módulo ${kind.toUpperCase()}${ph}`} value={magP * k1} min={0} step={kind === 'i' ? 1 : 10}
-                    onCommit={(v) => patch({ [`${kind}${k}_mag`]: v / k1 })} />
+                    onCommit={(v) => patch({ [`${pre}${kind}${k}_mag`]: v / k1 })} />
                 </td>
                 <td>
-                  <NumInput label={`Ângulo ${kind.toUpperCase()}${ph}`} value={num(`${kind}${k}_ang`)} step={5} digits={2}
-                    onCommit={(v) => patch({ [`${kind}${k}_ang`]: normAngle(v) })} />
+                  <NumInput label={`Ângulo ${kind.toUpperCase()}${ph}`} value={num(`${pre}${kind}${k}_ang`)} step={5} digits={2}
+                    onCommit={(v) => patch({ [`${pre}${kind}${k}_ang`]: normAngle(v) })} />
                 </td>
                 <td className="mono muted">
                   {sec ? `${fmt(magP, 2)} ${kind === 'i' ? 'A' : 'V'} prim.` : `${fmt(magP / other, 3)} ${kind === 'i' ? 'A' : 'V'} sec.`}
@@ -161,7 +166,7 @@ export function InjectionWindow({ sid }: { sid: string }) {
 
       <div className="inj-grid">
         <section className="card">
-          <div className="row"><h3>Correntes</h3><span className="spacer" /><button onClick={() => balance('i')}>Equilibrar a partir de A</button></div>
+          <div className="row"><h3>{is787 ? `Correntes – enrolamento 1 (W1, TC ${info.ctr}:1)` : 'Correntes'}</h3><span className="spacer" /><button onClick={() => balance('i')}>Equilibrar a partir de A</button></div>
           {phaseTable('i')}
         </section>
         <section className="card">
@@ -173,6 +178,41 @@ export function InjectionWindow({ sid }: { sid: string }) {
           </div>
         </section>
       </div>
+
+      {is787 && (
+        <>
+          <div className="inj-grid">
+            {windings.filter((n) => n > 1).map((n) => (
+              <section className="card" key={n}>
+                <div className="row"><h3>Correntes – enrolamento {n} (W{n}, TC {info.ctrs?.[n - 1] ?? 1}:1)</h3><span className="spacer" /><button onClick={() => balance('i', `w${n}`)}>Equilibrar a partir de A</button></div>
+                {phaseTable('i', `w${n}`, info.ctrs?.[n - 1] ?? 1)}
+              </section>
+            ))}
+          </div>
+          <div className="inj-grid">
+            <section className="card">
+              <h3>Neutro (IN1) e harmônicas da corrente diferencial</h3>
+              <table className="tbl inj-tbl">
+                <thead><tr><th /><th>Módulo ({iu})</th><th>Ângulo (°)</th><th>{sec ? 'Primário equivalente' : 'Secundário equivalente'}</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><b>IN1</b></td>
+                    <td><NumInput label="Módulo IN1" value={num('in1_mag') * kn} min={0} step={1} onCommit={(v) => patch({ in1_mag: v / kn })} /></td>
+                    <td><NumInput label="Ângulo IN1" value={num('in1_ang')} step={5} digits={2} onCommit={(v) => patch({ in1_ang: normAngle(v) })} /></td>
+                    <td className="mono muted">{sec ? `${fmt(num('in1_mag'), 2)} A prim.` : `${fmt(num('in1_mag') * kn_sec(info.ctrn), 3)} A sec.`}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="row wrap inj-freq">
+                {([['h2_pct', '2ª harmônica (IF2/IF1)'], ['h4_pct', '4ª harmônica (IF4/IF1)'], ['h5_pct', '5ª harmônica (IF5/IF1)']] as const).map(([k, label]) => (
+                  <NumField key={k} label={label} value={num(k)} unit="%" step={1} min={0} onCommit={(v) => patch({ [k]: v })} />
+                ))}
+              </div>
+              <span className="hint">REF: o neutro IN1 é comparado com a corrente residual (3I0) dos enrolamentos escolhidos em REF1POL. Harmônicas: percentual da corrente diferencial (restrição/bloqueio por 2ª, 4ª e 5ª).</span>
+            </section>
+          </div>
+        </>
+      )}
 
       <div className="inj-grid">
         <section className="card">

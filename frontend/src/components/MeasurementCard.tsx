@@ -68,10 +68,15 @@ export function MeasurementCard({ sid, data, info, onOpenInjection }: { sid: str
           <tr><th /><th>Primário</th><th>Secundário</th><th>Ângulo</th></tr>
         </thead>
         <tbody>
-          <Row name="IA" prim={m.IA_MAG} sec={m.IA_MAG / ctr} ang={m.IA_ANG} unitP="A" unitS="A" />
-          <Row name="IB" prim={m.IB_MAG} sec={m.IB_MAG / ctr} ang={m.IB_ANG} unitP="A" unitS="A" />
-          <Row name="IC" prim={m.IC_MAG} sec={m.IC_MAG / ctr} ang={m.IC_ANG} unitP="A" unitS="A" />
+          <Row name={info.model === '787' ? 'IA (W1)' : 'IA'} prim={m.IA_MAG} sec={m.IA_MAG / ctr} ang={m.IA_ANG} unitP="A" unitS="A" />
+          <Row name={info.model === '787' ? 'IB (W1)' : 'IB'} prim={m.IB_MAG} sec={m.IB_MAG / ctr} ang={m.IB_ANG} unitP="A" unitS="A" />
+          <Row name={info.model === '787' ? 'IC (W1)' : 'IC'} prim={m.IC_MAG} sec={m.IC_MAG / ctr} ang={m.IC_ANG} unitP="A" unitS="A" />
           <Row name="IG" prim={m.IG_MAG} sec={m.IG_MAG / ctrn} unitP="A" unitS="A" />
+          {info.model === '787' && (info.windings ?? [1, 2]).filter((n) => n > 1).flatMap((n) => (['A', 'B', 'C'] as const).map((p) => {
+            const k = `I${p}W${n}`
+            return <Row key={k} name={`${k.slice(0, 2)} (W${n})`} prim={m[`${k}_MAG`]} sec={m[`${k}_MAG`] / (info.ctrs?.[n - 1] ?? 1)} ang={m[`${k}_ANG`]} unitP="A" unitS="A" />
+          }))}
+          {info.model === '787' && <Row name="IN1" prim={m.IN1_MAG} sec={m.IN1_MAG / ctrn} ang={m.IN1_ANG} unitP="A" unitS="A" />}
           <Row name="VA" prim={m.VA_MAG} sec={m.VA_MAG / ptr} ang={m.VA_ANG} unitP="V" unitS="V" />
           <Row name="VB" prim={m.VB_MAG} sec={m.VB_MAG / ptr} ang={m.VB_ANG} unitP="V" unitS="V" />
           <Row name="VC" prim={m.VC_MAG} sec={m.VC_MAG / ptr} ang={m.VC_ANG} unitP="V" unitS="V" />

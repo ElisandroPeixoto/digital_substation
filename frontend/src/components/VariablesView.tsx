@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import { fmt, usePoll } from '../hooks'
-import type { DirectionalInfo, StateData } from '../types'
+import type { DirectionalInfo, StateData, StateElement } from '../types'
 import { useStamp } from '../prefs'
 import { Bar, Empty, Pill, Section } from './ui'
 
@@ -130,6 +130,8 @@ export function VariablesView({ sid, model }: { sid: string; model?: string }) {
           </table>
         )}
       </Section>
+
+      <DiffSection elements={s.protection.elements} />
 
       <DirectionalSection d={s.directional} />
 
@@ -366,5 +368,63 @@ function ForceAny({ sid, forced }: { sid: string; forced: Record<string, number>
         </div>
       )}
     </>
+  )
+}
+
+
+/** SEL-787: detalhe do diferencial (87) por fase e do REF1. */
+function DiffSection({ elements }: { elements: StateElement[] }) {
+  const d = elements.find((e) => e.diff)
+  const r = elements.find((e) => e.ref)
+  if (!d?.diff && !r?.ref) return null
+  const df = d?.diff
+  return (
+    <Section title="Diferencial (87) e REF" count={(d ? 1 : 0) + (r ? 1 : 0)}>
+      {df && d && (
+        <>
+          <p className="hint">{d.setting}</p>
+          <table className="tbl">
+            <thead>
+              <tr><th>Fase</th><th>IOP (pu TAP)</th><th>IRT (pu TAP)</th><th>Limiar f(IRT)</th><th>2ª / 4ª / 5ª harm. (pu)</th><th>INR</th><th>87R</th><th>87HR</th><th>87BL</th><th>87U</th></tr>
+            </thead>
+            <tbody>
+              {df.phases.map((p) => (
+                <tr key={p.phase} className={p.u || p.r ? 'hl-red' : p.hr ? 'hl' : ''}>
+                  <td><b>{p.phase}</b></td>
+                  <td className="mono">{fmt(p.iop, 3)}</td>
+                  <td className="mono">{fmt(p.irt, 3)}</td>
+                  <td className="mono">{fmt(p.threshold, 3)}</td>
+                  <td className="mono">{fmt(p.h2, 3)} / {fmt(p.h4, 3)} / {fmt(p.h5, 3)}</td>
+                  <td><Pill on={p.inr} title="Alta segurança (energização)" /></td>
+                  <td><Pill on={p.r} /></td>
+                  <td><Pill on={p.hr} /></td>
+                  <td><Pill on={p.bl} /></td>
+                  <td><Pill on={p.u} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="hint">Alarme de corrente diferencial 87AP <Pill on={df.alarm} /> · 87AT <Pill on={df.alarm_t} /> · Alarme de 5ª harmônica TH5P <Pill on={df.th5} /> · TH5T <Pill on={df.th5_t} /></p>
+        </>
+      )}
+      {r?.ref && (
+        <table className="tbl">
+          <thead><tr><th>REF1</th><th>|IN1| (pu)</th><th>|IG pol.| (pu)</th><th>Torque REFTQ1</th><th>Habilitado</th><th>Bypass</th><th>REF1F</th><th>REF1R</th><th>REF1P</th></tr></thead>
+          <tbody>
+            <tr className={r.timed ? 'hl-red' : r.pk ? 'hl' : ''}>
+              <td className="mono">{r.setting}</td>
+              <td className="mono">{fmt(r.ref.in, 3)}</td>
+              <td className="mono">{fmt(r.ref.ig, 3)}</td>
+              <td className="mono">{fmt(r.ref.torque, 4)}</td>
+              <td><Pill on={r.ref.enable} /></td>
+              <td><Pill on={r.ref.bypass} /></td>
+              <td><Pill on={r.ref.fwd} /></td>
+              <td><Pill on={r.ref.rev} /></td>
+              <td><Pill on={r.timed} /></td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </Section>
   )
 }

@@ -270,3 +270,23 @@ python -m pytest -q
 
 Não há pilha DNP3 em rede (GOOSE/seletividade lógica só sinalizados), menu completo do display, elementos 67/49/46 e falha de disjuntor interna. Ideias: comparar tempos
 com relé real, WebSocket no lugar do polling, DNP3 real (ex.: `opendnp3`) para testar com um mestre externo, e suporte a outros relés do `.rdb` com bobinas/entradas atípicas.
+
+
+## SEL-787 (proteção de transformador)
+
+Suportado a partir de `RELAYTYPE=SEL-787-*` (`backend/app/engine787.py`, `protection_787.py`; testes `test_sel787.py`). O motor herda o do SEL-751
+(lógica SELogic, entradas/saídas, SER, DNP, frontal) e acrescenta:
+
+- **Correntes por enrolamento** W1 a W4 (injeção: W1 em `ia_*`/`ib_*`/`ic_*`, W2 a W4 em `wNia_*`…) e canal **IN1** (`in1_mag/ang`). Ao abrir o
+  relé, a injeção inicial é uma carga passante (100 % do TAP) que o diferencial enxerga como zero. A janela de injeção mostra um cartão por enrolamento,
+  o neutro IN1 e o conteúdo harmônico da corrente diferencial (`h2_pct`, `h4_pct`, `h5_pct`).
+- **87** (figuras 4.1 a 4.6): TAPn (de MVA/VWDGn/CTRn ou do ajuste), compensação `WnCTC` (matrizes da tabela 4.5), IOP = |soma fasorial|, IRT = soma dos módulos,
+  característica de dupla inclinação (SLP1/SLP2/IRS1/O87P), alta segurança por INRn (SLP2 no lugar de SLP1 por 10 ciclos após energizar), restrição por
+  2ª e 4ª harmônicas (HRSTR), bloqueio por 2ª/4ª cruzado e 5ª individual (HBLK), não restrito 87U, alarmes 87AP/87AT e TH5P/TH5T.
+  Bits: 87R1..3, 87R, 87U1..3, 87U, 87HR, 87HB, 87BLn, INRn, 2_4HBn, 5HBn.
+- **REF1** (figuras 4.9 a 4.13): IN1 × residual dos enrolamentos de REF1POL, REF1F/REF1R/REF1P (U4, TD 0,5) e bypass com o disjuntor aberto. Aproximação:
+  o limiar do torque (THRES1P/N) não consta no trecho do manual e vale ±0,08·50REF1P². REF3A/REF3B não foram implementados.
+- **50/51 por enrolamento**: 50Pnx, 50Gnx, 50Qnx, 50N1x (instantâneo/tempo definido), 51Pn, 51PnA/B/C, 51Gn, 51Qn, 51N1 (curvas U1–U5/C1–C5). Não implementados:
+  elementos combinados (50P121P, 51PC12P…), 50P3xA/B/C (TCs separados); 27/59/25/32/81 vêm do motor do 751.
+- **Disparo/fechamento por enrolamento**: TRn → TRIPn e TRXFMR → TRIPXFMR (TDURD, ULTRIPn/ULTRXFMR), CLn → CLOSEn (CFDn, ULCLn) e um disjuntor simulado por
+  enrolamento; as bobinas são deduzidas das saídas OUTxxx que citam TRIPn/TRIPXFMR/CLOSEn. Sem religamento (79). `52An` só segue o disjuntor se for uma entrada (INxxx).

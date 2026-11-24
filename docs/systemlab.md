@@ -110,6 +110,8 @@ Cada elemento tem a caixa **Ocultar nome e dados no diagrama** no painel de prop
 **Duplo clique** em disjuntor ou seccionadora abre/fecha, ou use a caixa "Fechado/Fechada" do painel. O resultado Ã© recalculado
 imediatamente.
 
+**Manobra local:** abrir/fechar o disjuntor no SystemLab (mesmo associado a um IED) só move a posição física (`POST /breaker` → `engine.local_breaker`): não passa pelo relé, não aciona TRIP/CLOSE nem saídas, não parte o 79 e interrompe um religamento em curso (79 → LO). O 52A apenas acompanha a posição.
+
 ### Vista
 
 - **Zoom:** roda do mouse (30 % a 250 %, centrado no cursor).
@@ -291,3 +293,5 @@ Elemento **Texto** (último da barra de elementos): insere texto livre no diagra
 O **TP** tem o parâmetro **Tipo** (trifásico ou monofásico). No monofásico escolha a **fase utilizada** (A, B ou C; medição fase-neutro). O unifilar mostra a identificação ao lado do símbolo (**3φ** ou **1φ B**) e a mesma informação aparece nos dados do TP (ex.: 1φ B · 66,4 V) e nas propriedades. O secundário mostrado é fase-fase no trifásico e fase-neutro da fase escolhida no monofásico.
 
 No **IED**, **TP (tensões)** alimenta VA/VB/VC do relé: TP trifásico entrega as três fases (em falta, os fasores por fase); TP monofásico entrega só a fase medida (as outras ficam em 0 V). **TP de sincronismo (VS)** só aceita **TP monofásico** e alimenta a entrada **VS** do relé (módulo e ângulo da tensão fase-neutro da fase medida), usada na verificação de sincronismo (25) do DigitalRelay; a frequência de VS continua a ajustada na janela de injeção.
+
+**Modelo do IED:** o elemento IED tem o seletor de modelo (SEL-751, SEL-787 ou SEL-2440); a lista de relés mostra só os do modelo escolhido (trocar o modelo desassocia um relé de outro modelo). No SEL-787 o IED aceita até 3 TCs (W1, W2 e W3), que alimentam as correntes dos enrolamentos 1 a 3 do relé (injeção `ia_*`, `w2ia_*`, `w3ia_*`); o disjuntor monitorado continua sendo o do W1. O SEL-2440 não tem entradas analógicas, então só mostra a associação do relé, o IED 61850 e os atalhos.

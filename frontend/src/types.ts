@@ -47,6 +47,8 @@ export interface SessionInfo {
   ctrn: number
   ptr: number
   ptrs?: number           // relação do TP de sincronismo (PTRS)
+  ctrs?: number[]         // SEL-787: relações de TC dos enrolamentos 1 a 4 (CTR1..CTR4)
+  windings?: number[]     // SEL-787: enrolamentos no diferencial (E87Wn = Y)
   vnom: number
   presets: Record<string, string>
   fault_types: string[]
@@ -204,7 +206,11 @@ export interface StateElement {
   reset?: boolean
   dir_bit?: string           // bit de controle direcional do nível (ex.: P1DIR)
   dir_ok?: boolean
+  diff?: DiffInfo            // SEL-787: elemento diferencial 87
+  ref?: { in: number; ig: number; torque: number; enable: boolean; bypass: boolean; fwd: boolean; rev: boolean }   // SEL-787: REF1
 }
+export interface DiffPhase { phase: string; iop: number; irt: number; threshold: number; h2: number; h4: number; h5: number; inr: boolean; r: boolean; hr: boolean; u: boolean; bl: boolean }
+export interface DiffInfo { phases: DiffPhase[]; alarm: boolean; alarm_t: boolean; th5: boolean; th5_t: boolean; slp1: number; slp2: number; irs1: number; o87p: number; u87p: number }
 export interface DirectionalInfo {
   enabled: boolean
   edir?: string

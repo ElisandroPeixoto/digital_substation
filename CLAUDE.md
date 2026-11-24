@@ -32,7 +32,7 @@ extrai os arquivos de texto de cada ajuste e **simula o relé** com o ajuste esc
 3. **Mapa DNP3** (BO/BI/AI/eventos) com **envio de comandos** (Select/Operate/Direct).
 
 É um **MVP**: simula o comportamento funcional descrito pelos ajustes, **não** executa o firmware.
-Suporta o **SEL-751** e o **SEL-2440** (DPAC, só lógica e E/S: `engine.model == "2440"`, passo `_step_2440`, classe de lógica `L`, 48 entradas/saídas em 3 cartões, bits `VB`/`CB`/`RB`; frontend `Relay2440Front` + `Panel2440`; testes `test_sel2440.py`; detalhes em `docs/digitalrelay.md`). VB/RB/CB: `engine.set_bit` (`set|clear|toggle|pulse|watch`), valem para os dois modelos; textos personalizados só no frontend (`customTexts.ts`, aba `TextsView`, chave `sel751.texts.<relay_id>`).
+Suporta o **SEL-751**, o **SEL-787** (`engine787.py` + `protection_787.py`: 87, REF1, 50/51 por enrolamento, até 4 enrolamentos; testes `test_sel787.py`; detalhes em `docs/digitalrelay.md`) e o **SEL-2440** (DPAC, só lógica e E/S: `engine.model == "2440"`, passo `_step_2440`, classe de lógica `L`, 48 entradas/saídas em 3 cartões, bits `VB`/`CB`/`RB`; frontend `Relay2440Front` + `Panel2440`; testes `test_sel2440.py`; detalhes em `docs/digitalrelay.md`). VB/RB/CB: `engine.set_bit` (`set|clear|toggle|pulse|watch`), valem para os dois modelos; textos personalizados só no frontend (`customTexts.ts`, aba `TextsView`, chave `sel751.texts.<relay_id>`).
 Escopo excluído (lido, mas ignorado): Modbus (`M`), EtherNet/IP (`E1–E3`), IEC 103 (`I`),
 portas (`P1–P4`, `PF`), touchscreen (`SET_HMI.TXT`).
 

@@ -54,6 +54,31 @@ class SimConfig:
     vs_mag: float = 7967.4
     vs_ang: float = 0.0
     vs_freq: float = 60.0
+    # SEL-787 (diferencial): correntes primárias dos enrolamentos 2 a 4 (o enrolamento 1 usa ia_*/ib_*/ic_*), corrente do canal IN1
+    # (TC de neutro) e conteúdo harmônico da corrente diferencial (% da fundamental)
+    w2ia_mag: float = 0.0
+    w2ia_ang: float = -18.0
+    w2ib_mag: float = 0.0
+    w2ib_ang: float = -138.0
+    w2ic_mag: float = 0.0
+    w2ic_ang: float = 102.0
+    w3ia_mag: float = 0.0
+    w3ia_ang: float = -18.0
+    w3ib_mag: float = 0.0
+    w3ib_ang: float = -138.0
+    w3ic_mag: float = 0.0
+    w3ic_ang: float = 102.0
+    w4ia_mag: float = 0.0
+    w4ia_ang: float = -18.0
+    w4ib_mag: float = 0.0
+    w4ib_ang: float = -138.0
+    w4ic_mag: float = 0.0
+    w4ic_ang: float = 102.0
+    in1_mag: float = 0.0
+    in1_ang: float = 0.0
+    h2_pct: float = 0.0
+    h4_pct: float = 0.0
+    h5_pct: float = 0.0
     vdc: float = 125.0
     open_ms: float = 60.0              # tempo mecânico de abertura do disjuntor
     close_ms: float = 100.0            # tempo mecânico de fechamento

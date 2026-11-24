@@ -11,3 +11,6 @@ frontend/dist/
 *.scd
 *.cid
 *.icd
+
+# executável gerado (build-exe.ps1)
+release/

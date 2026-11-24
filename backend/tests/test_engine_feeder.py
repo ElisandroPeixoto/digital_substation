@@ -274,3 +274,17 @@ def test_analog_injection_switch(feeder):
     feeder.set_sim({"analog_on": True})
     run(feeder, 0.2)
     assert feeder.vals["IA_MAG"] > 50 and feeder.vals["VA_MAG"] > 1000
+
+
+@needs_rdb
+def test_manobra_local_do_disjuntor_nao_aciona_saidas(feeder):
+    """Manobra no SystemLab (posição física) não passa pelo relé: sem TRIP/CLOSE e sem mudança nas saídas."""
+    run(feeder, 2)
+    base = {k: feeder.vals.get(k, 0.0) for k in feeder.out_keys}
+    feeder.local_breaker(False)
+    run(feeder, 1)
+    assert not feeder.field.breaker.closed and feeder.vals["TRIP"] == 0 and feeder.vals["CLOSE"] == 0
+    feeder.local_breaker(True)
+    run(feeder, 1)
+    assert feeder.field.breaker.closed and feeder.vals["TRIP"] == 0
+    assert {k: feeder.vals.get(k, 0.0) for k in feeder.out_keys} == base

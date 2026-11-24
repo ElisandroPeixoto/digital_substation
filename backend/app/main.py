@@ -6,6 +6,7 @@ import cmath
 import math
 import contextlib
 import re
+import sys
 import uuid
 from pathlib import Path
 from urllib.parse import quote
@@ -24,7 +25,9 @@ from .selogic import split_comment
 from .sessions import SPEEDS, Session, SessionManager
 
 MAX_UPLOAD = 100 * 1024 * 1024
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+# Empacotado (PyInstaller) o frontend vem junto, em <pacote>/frontend/dist; em desenvolvimento fica na raiz do repositório.
+_BASE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+FRONTEND_DIST = (_BASE / "frontend" / "dist").resolve()
 
 uploads: dict[str, RdbArchive] = {}
 manager = SessionManager()
@@ -238,6 +241,21 @@ def _configured_meter(eng, base: dict) -> dict:
     return {k: round(x, 3) for k, x in m.items()}
 
 
+def _winding_meter(eng) -> dict:
+    """SEL-787: correntes primárias dos enrolamentos 2 a 4 e do neutro IN1 (com a injeção desligada, os valores ajustados)."""
+    cfg = eng.field.cfg
+    out: dict[str, float] = {}
+    for n in (2, 3, 4):
+        for p in "abc":
+            mag, ang = getattr(cfg, f"w{n}i{p}_mag"), getattr(cfg, f"w{n}i{p}_ang")
+            if cfg.analog_on:
+                mag = eng.vals.get(f"I{p.upper()}W{n}_MAG", 0.0)
+            out[f"I{p.upper()}W{n}_MAG"], out[f"I{p.upper()}W{n}_ANG"] = round(mag, 3), round(ang, 3)
+    out["IN1_MAG"] = round(cfg.in1_mag if not cfg.analog_on else eng.vals.get("IN1_MAG", 0.0), 3)
+    out["IN1_ANG"] = round(cfg.in1_ang, 3)
+    return out
+
+
 @app.get("/api/sessions/{sid}/panel")
 async def get_panel(sid: str) -> dict:
     s = _session(sid)
@@ -251,6 +269,8 @@ async def get_panel(sid: str) -> dict:
         "FREQ", "P", "Q", "S", "PF", "3I2", "VDC")}
     if not eng.field.cfg.analog_on:
         meter = _configured_meter(eng, meter)
+    if eng.model == "787":
+        meter.update(_winding_meter(eng))
     return {
         "model": eng.model, "io": eng.snapshot_io() if eng.model == "2440" else None,
         "bits": eng.snapshot_bits(),
@@ -335,7 +355,7 @@ async def clear_forces(sid: str) -> dict:
 async def force_breaker(sid: str, body: BreakerBody) -> dict:
     """Move o disjuntor "no campo" (posição física), independente do modo da entrada 52A."""
     eng = _session(sid).engine
-    eng.field.force_position(body.closed)
+    eng.local_breaker(body.closed)
     return {"closed": eng.field.breaker.closed}
 
 

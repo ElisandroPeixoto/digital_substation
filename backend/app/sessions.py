@@ -35,16 +35,26 @@ class Session:
         classes = []
         for cls, items in st.sections.items():
             classes.append({"cls": cls, "name": st.class_names.get(cls, cls), "count": len(items)})
-        return {
+        info = {
             "model": eng.model, "id": self.id, "filename": self.filename, "relay_id": self.relay.id, "device": eng.device_name,
             "header": st.header, "classes": classes, "files": sorted(self.relay.files.keys()),
             "static": eng.panel.static_info(), "ctr": eng.ctr, "ctrn": eng.ctrn, "ptr": eng.ptr, "ptrs": eng.ptrs, "vnom": eng.vnom,
             "presets": None, "ied": None,
         }
+        if eng.model == "787":
+            from .protection_787 import enabled_windings
+
+            info["ctrs"] = [eng.ctr_of(n) for n in range(1, 5)]
+            info["windings"] = enabled_windings(eng) or [1, 2]
+        return info
 
 
 def create_engine(relay: RdbRelay) -> RelayEngine:
     settings = RelaySettings.from_files(relay.files)
+    if "787" in settings.header.get("RELAYTYPE", "").upper():
+        from .engine787 import Relay787Engine
+
+        return Relay787Engine(settings, device_name=relay.name)
     return RelayEngine(settings, device_name=relay.name)
 
 

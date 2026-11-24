@@ -478,19 +478,28 @@ export function SystemLabApp() {
       const tc = L.tc != null ? elById.get(L.tc) : undefined
       const tp = L.tp != null ? elById.get(L.tp) : undefined
       const tps = L.tps != null ? elById.get(L.tps) : undefined               // TP de sincronismo: alimenta a entrada VS do relé
-      if (tc?.kind === 'tc' || tp?.kind === 'tp' || tps?.kind === 'tp') {
+      const model = ied.model ?? s.model ?? '751'
+      if (model === '2440') { st.sent = ''; continue }                           // SEL-2440: sem entradas analógicas
+      const tc2 = model === '787' && L.tc2 != null ? elById.get(L.tc2) : undefined       // SEL-787: enrolamentos 2 e 3
+      const tc3 = model === '787' && L.tc3 != null ? elById.get(L.tc3) : undefined
+      if (tc?.kind === 'tc' || tc2?.kind === 'tc' || tc3?.kind === 'tc' || tp?.kind === 'tp' || tps?.kind === 'tp') {
         const patch: Record<string, number | boolean> = { analog_on: true }
-        const r = tc?.kind === 'tc' ? sol.res.get(tc.id) : undefined
-        const ft = tc?.kind === 'tc' ? sol.fault?.terms.get(tc.id)?.[0] : undefined      // em falta: fasores por fase
-        if (tc?.kind === 'tc') {
+        // correntes de um TC em um enrolamento: prefixo '' = W1 (ia_mag…), 'w2' = W2 (w2ia_mag…)
+        const winding = (tcEl: El | undefined, pre: string) => {
+          if (tcEl?.kind !== 'tc') return
+          const r = sol.res.get(tcEl.id)
+          const ft = sol.fault?.terms.get(tcEl.id)?.[0]                          // em falta: fasores por fase
           const mag = r?.energized ? r.i[0].mag : 0
           const ang = r?.energized ? r.i[0].ang : 0
           if (ft && r?.energized) {
-            Object.assign(patch, { ia_mag: ft.i.a.mag, ib_mag: ft.i.b.mag, ic_mag: ft.i.c.mag, ia_ang: ft.i.a.ang, ib_ang: ft.i.b.ang, ic_ang: ft.i.c.ang })
+            Object.assign(patch, { [`${pre}ia_mag`]: ft.i.a.mag, [`${pre}ib_mag`]: ft.i.b.mag, [`${pre}ic_mag`]: ft.i.c.mag, [`${pre}ia_ang`]: ft.i.a.ang, [`${pre}ib_ang`]: ft.i.b.ang, [`${pre}ic_ang`]: ft.i.c.ang })
           } else {
-            Object.assign(patch, { ia_mag: mag, ib_mag: mag, ic_mag: mag, ia_ang: ang, ib_ang: ang - 120, ic_ang: ang + 120 })
+            Object.assign(patch, { [`${pre}ia_mag`]: mag, [`${pre}ib_mag`]: mag, [`${pre}ic_mag`]: mag, [`${pre}ia_ang`]: ang, [`${pre}ib_ang`]: ang - 120, [`${pre}ic_ang`]: ang + 120 })
           }
         }
+        winding(tc, '')
+        winding(tc2, 'w2')
+        winding(tc3, 'w3')
         const rv = tp?.kind === 'tp' ? sol.res.get(tp.id) : undefined
         const fv = tp?.kind === 'tp' ? sol.fault?.terms.get(tp.id)?.[0] : undefined
         if (tp?.kind === 'tp') {
@@ -618,7 +627,7 @@ export function SystemLabApp() {
           delete copy.sid; delete copy.rname; delete copy.sc; delete copy.scPos; delete copy.scOpen
           if (e.links) {
             const links: NonNullable<El['links']> = {}
-            for (const key of ['breaker', 'tc', 'tp', 'tps'] as const) { const v = e.links[key]; if (v != null && map.has(v)) links[key] = map.get(v) }
+            for (const key of ['breaker', 'tc', 'tc2', 'tc3', 'tp', 'tps'] as const) { const v = e.links[key]; if (v != null && map.has(v)) links[key] = map.get(v) }
             copy.links = links
           }
         }
@@ -1017,14 +1026,25 @@ export function SystemLabApp() {
     if (!s) return ['relé encerrado']
     const L = el.links ?? {}
     const nm = (id?: number) => (id != null ? elById.get(id)?.name : undefined)
-    const lk = [nm(L.breaker), nm(L.tc), nm(L.tp)].filter(Boolean).join(' · ')
-    return [(s.device || s.relay_id).slice(0, 28), s.ied ? `61850: ${s.ied}` : 'sem IED 61850', ...(lk ? [lk] : [])]
+    const lk = [nm(L.breaker), nm(L.tc), nm(L.tc2), nm(L.tc3), nm(L.tp)].filter(Boolean).join(' · ')
+    return [`SEL-${el.model ?? s.model ?? '751'} · ${(s.device || s.relay_id).slice(0, 20)}`, s.ied ? `61850: ${s.ied}` : 'sem IED 61850', ...(lk ? [lk] : [])]
   }
   // IED selecionado: carrega os IEDs do projeto IEC61850 para a associação
   const selKind = sel?.type === 'el' && sel.ids.length === 1 ? elById.get(sel.ids[0])?.kind : undefined
   useEffect(() => {
     if (selKind === 'ied') api.iecProject().then((p) => setIecIeds(p.ieds.map((i) => i.name))).catch(() => setIecIeds([]))
   }, [selKind])
+  const iedModel = (e: El): string => e.model ?? sessions.find((x) => x.id === e.sid)?.model ?? '751'
+  const pickModel = (elId: number, model: string) => setDg((d) => ({
+    ...d,
+    els: d.els.map((e) => {
+      if (e.id !== elId) return e
+      const cur = sessions.find((x) => x.id === e.sid)
+      const keep = cur && (cur.model || '751') === model                       // relé de outro modelo é desassociado
+      const links = model === '787' ? e.links : e.links && { ...e.links, tc2: undefined, tc3: undefined }
+      return { ...e, model, sid: keep ? e.sid : undefined, rname: keep ? e.rname : undefined, links: model === '2440' ? undefined : links }
+    }),
+  }))
   const pickRelay = (elId: number, sid: string) => {
     const s = sessions.find((x) => x.id === sid)
     setDg((d) => ({
@@ -1297,11 +1317,19 @@ export function SystemLabApp() {
             {selEl.kind === 'ied' && (
               <>
                 <label className="sl-field">
+                  <span>Modelo do IED</span>
+                  <select className="numinput" value={iedModel(selEl)} onChange={(e) => pickModel(selEl.id, e.target.value)}>
+                    <option value="751">SEL-751</option>
+                    <option value="787">SEL-787</option>
+                    <option value="2440">SEL-2440</option>
+                  </select>
+                </label>
+                <label className="sl-field">
                   <span>Relé do DigitalRelay</span>
                   <select className="numinput" value={selEl.sid ?? ''} onChange={(e) => pickRelay(selEl.id, e.target.value)}>
                     <option value="">— nenhum —</option>
                     {selEl.sid && !sessions.some((x) => x.id === selEl.sid) && <option value={selEl.sid}>{selEl.rname ?? selEl.sid} (encerrado)</option>}
-                    {sessions.map((x) => <option key={x.id} value={x.id}>{(x.device || x.relay_id).slice(0, 40)}</option>)}
+                    {sessions.filter((x) => (x.model || '751') === iedModel(selEl)).map((x) => <option key={x.id} value={x.id}>{(x.device || x.relay_id).slice(0, 40)}</option>)}
                   </select>
                 </label>
                 {selEl.sid && sessions.some((x) => x.id === selEl.sid) && (
@@ -1313,9 +1341,13 @@ export function SystemLabApp() {
                     </select>
                   </label>
                 )}
-                {selEl.sid && (
+                {selEl.sid && iedModel(selEl) === '2440' && <p className="hint">O SEL-2440 não tem entradas analógicas: só as entradas/saídas digitais e os atalhos.</p>}
+                {selEl.sid && iedModel(selEl) !== '2440' && (
                   <>
-                    {([['breaker', 'Disjuntor monitorado', 'breaker'], ['tc', 'TC (correntes)', 'tc'], ['tp', 'TP (tensões)', 'tp'], ['tps', 'TP de sincronismo (VS)', 'tp']] as const).map(([key, label, kind]) => (
+                    {([['breaker', iedModel(selEl) === '787' ? 'Disjuntor monitorado (W1)' : 'Disjuntor monitorado', 'breaker'],
+                      ['tc', iedModel(selEl) === '787' ? 'TC do enrolamento 1 (W1)' : 'TC (correntes)', 'tc'],
+                      ...(iedModel(selEl) === '787' ? ([['tc2', 'TC do enrolamento 2 (W2)', 'tc'], ['tc3', 'TC do enrolamento 3 (W3)', 'tc']] as const) : []),
+                      ['tp', 'TP (tensões)', 'tp'], ['tps', 'TP de sincronismo (VS)', 'tp']] as const).map(([key, label, kind]) => (
                       <label className="sl-field" key={key}>
                         <span>{label}</span>
                         <select className="numinput" value={selEl.links?.[key] ?? ''}
