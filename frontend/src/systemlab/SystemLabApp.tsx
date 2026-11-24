@@ -68,6 +68,35 @@ function resizeBus(d0: Diagram, id: number, n1raw: number, side: 'lo' | 'hi'): D
   return { ...d0, els, wires }
 }
 
+const EXPORT_FORMAT = 'eclipse-systemlab'
+
+/** Valida e normaliza um arquivo JSON exportado pelo SystemLab: devolve o diagrama e as configurações ou lança um Error com o motivo. */
+function parseImport(text: string): { diagram: Diagram; settings?: { sbase: number; pu: boolean } } {
+  let j: unknown
+  try { j = JSON.parse(text) } catch { throw new Error('O arquivo não é um JSON válido.') }
+  const o = j as { format?: string; diagram?: { els?: unknown; wires?: unknown }; settings?: { sbase?: number; pu?: boolean } }
+  if (!o || typeof o !== 'object' || o.format !== EXPORT_FORMAT || !o.diagram) throw new Error('O arquivo não é uma exportação do SystemLab (formato desconhecido).')
+  const rawEls = o.diagram.els
+  const rawWires = o.diagram.wires
+  if (!Array.isArray(rawEls) || !Array.isArray(rawWires)) throw new Error('Diagrama inválido: faltam elementos ou ligações.')
+  const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+  const els: El[] = []
+  const ids = new Set<number>()
+  for (const e of rawEls as Record<string, unknown>[]) {
+    if (!e || !isNum(e.id) || typeof e.kind !== 'string' || !(e.kind in KINDS) || !isNum(e.x) || !isNum(e.y)) throw new Error('Diagrama inválido: elemento com tipo ou posição desconhecidos.')
+    if (ids.has(e.id)) throw new Error(`Diagrama inválido: id de elemento repetido (${e.id}).`)
+    ids.add(e.id)
+    const p: Record<string, number | boolean> = {}
+    for (const [k, v] of Object.entries((e.p && typeof e.p === 'object' ? e.p : {}) as Record<string, unknown>)) if (isNum(v) || typeof v === 'boolean') p[k] = v
+    els.push({ ...(e as unknown as El), rot: isNum(e.rot) ? e.rot : 0, name: typeof e.name === 'string' ? e.name : `${e.kind}${e.id}`, p })
+  }
+  const port = (v: unknown): v is [number, number] => Array.isArray(v) && v.length === 2 && isNum(v[0]) && isNum(v[1])
+  const wires = (rawWires as Record<string, unknown>[]).filter((w) => w && isNum(w.id) && port(w.a) && port(w.b) && ids.has(w.a[0]) && ids.has(w.b[0])) as unknown as Diagram['wires']
+  const nextId = Math.max(1, ...els.map((e) => e.id), ...wires.map((w) => w.id)) + 1
+  const settings = o.settings && isNum(o.settings.sbase) && o.settings.sbase > 0 ? { sbase: o.settings.sbase, pu: o.settings.pu === true } : undefined
+  return { diagram: { els, wires: pruneTaps(wires), nextId }, settings }
+}
+
 function emptyDiagram(): Diagram {
   return { els: [], wires: [], nextId: 1 }
 }
@@ -271,6 +300,8 @@ export function SystemLabApp() {
     } catch { return { sbase: DEFAULT_SBASE, pu: false } }
   })
   const [showCfg, setShowCfg] = useState(false)
+  const [ioMsg, setIoMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const saveCfg = (n: { sbase: number; pu: boolean }) => {
     setCfg(n)
     try { localStorage.setItem('systemlab.settings', JSON.stringify(n)) } catch { /* ignora */ }
@@ -758,6 +789,39 @@ export function SystemLabApp() {
   }
 
   const wiringPos = wiring ? portPos(wiring) : null
+
+  /** Exporta o diagrama e as configurações para um arquivo JSON. */
+  const exportJson = () => {
+    const payload = {
+      format: EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(),
+      settings: { sbase: cfg.sbase, pu: cfg.pu },
+      diagram: { els: dg.els, wires: dg.wires, nextId: dg.nextId },
+    }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `systemlab-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    setIoMsg({ ok: true, text: `Exportado: ${dg.els.length} elementos, ${dg.wires.length} ligações.` })
+  }
+  /** Importa um JSON exportado: substitui o diagrama (e as configurações, se vierem no arquivo). */
+  const importJson = async (file: File) => {
+    try {
+      if (file.size > 20 * 1024 * 1024) throw new Error('Arquivo maior que 20 MB.')
+      const { diagram, settings } = parseImport(await file.text())
+      if (dg.els.length > 0 && !window.confirm(`Substituir o diagrama atual (${dg.els.length} elementos) pelo arquivo "${file.name}" (${diagram.els.length} elementos)?`)) return
+      setDg(diagram)
+      setSel(null)
+      setWiring(null)
+      if (settings) saveCfg(settings)
+      setIoMsg({ ok: true, text: `Importado: ${diagram.els.length} elementos, ${diagram.wires.length} ligações.` })
+    } catch (e) {
+      setIoMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    }
+  }
   const commLines = (el: El): string[] => {
     const s = sessions.find((x) => x.id === el.sid)
     if (!el.sid) return ['sem relé associado']
@@ -957,6 +1021,15 @@ export function SystemLabApp() {
                 <input type="checkbox" checked={cfg.pu} onChange={(e) => saveCfg({ ...cfg, pu: e.target.checked })} />
               </label>
               <div className="row"><button onClick={() => saveCfg({ ...cfg, sbase: DEFAULT_SBASE })} disabled={cfg.sbase === DEFAULT_SBASE}>Restaurar {DEFAULT_SBASE} MVA</button></div>
+              <div className="sl-actions">
+                <h4>Dados da simulação</h4>
+                <div className="row">
+                  <button onClick={exportJson} title="Baixa um arquivo JSON com o diagrama (elementos, ligações, atalhos) e as configurações">⬇ Exportar JSON</button>
+                  <button onClick={() => fileRef.current?.click()} title="Substitui o diagrama atual pelo conteúdo de um JSON exportado">⬆ Importar JSON</button>
+                  <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importJson(f) }} />
+                </div>
+                {ioMsg && <p className={`hint ${ioMsg.ok ? '' : 'warn'}`}>{ioMsg.text}</p>}
+              </div>
             </div>
           </div>
         )}
