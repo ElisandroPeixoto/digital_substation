@@ -281,3 +281,13 @@ O botão ⚙ da barra do SystemLab abre as configurações: **Potência de base 
 ## Copiar e colar
 
 Selecione um ou mais elementos e use **Ctrl+C** / **Ctrl+V** (ou o botão direito: **Copiar** no elemento, **Colar** / **Colar aqui** no fundo). A colagem fica centrada no ponteiro (Ctrl+V sem o ponteiro ter passado pelo diagrama desloca a cada colagem), mantém as ligações entre os elementos copiados e dá nomes novos (DJ1 → DJ2…). IEDs colados saem **sem relé associado** (um relé só pode estar em um IED) e sem atalhos; as associações a disjuntor/TC/TP só valem se esses elementos também foram copiados. Arrastar com o botão direito continua deslocando a vista.
+
+## Texto
+
+Elemento **Texto** (último da barra de elementos): insere texto livre no diagrama, sem terminais e fora do cálculo elétrico. Arraste da barra ou dê duplo clique nela; edite o conteúdo na caixa de texto das propriedades (que ocupa a largura do painel; `- ` ou `* ` no início da linha viram o marcador `• ` e Enter continua a lista; Enter em um marcador vazio a encerra) ou por duplo clique no próprio texto. Propriedades: tamanho da fonte (px), negrito e cor (padrão, azul, verde-água, vermelho, cinza; seguem o tema). Pode ser movido, copiado/colado (não gira) e é exportado/importado no JSON.
+
+## TP trifásico/monofásico e TP de sincronismo
+
+O **TP** tem o parâmetro **Tipo** (trifásico ou monofásico). No monofásico escolha a **fase utilizada** (A, B ou C; medição fase-neutro). O unifilar mostra a identificação ao lado do símbolo (**3φ** ou **1φ B**) e a mesma informação aparece nos dados do TP (ex.: 1φ B · 66,4 V) e nas propriedades. O secundário mostrado é fase-fase no trifásico e fase-neutro da fase escolhida no monofásico.
+
+No **IED**, **TP (tensões)** alimenta VA/VB/VC do relé: TP trifásico entrega as três fases (em falta, os fasores por fase); TP monofásico entrega só a fase medida (as outras ficam em 0 V). **TP de sincronismo (VS)** só aceita **TP monofásico** e alimenta a entrada **VS** do relé (módulo e ângulo da tensão fase-neutro da fase medida), usada na verificação de sincronismo (25) do DigitalRelay; a frequência de VS continua a ajustada na janela de injeção.

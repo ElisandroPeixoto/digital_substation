@@ -1,6 +1,6 @@
 /** Modelo do diagrama unifilar do SystemLab (elementos, conexões, geometria dos terminais). */
 
-export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc' | 'ied' | 'fault' | 'line' | 'transformer3' | 'battery' | 'inverter'
+export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc' | 'ied' | 'fault' | 'line' | 'transformer3' | 'text' | 'battery' | 'inverter'
 export type Params = Record<string, number | boolean>
 
 export type ShortcutKind = 'cmd' | 'bit' | 'meas'
@@ -22,9 +22,11 @@ export interface El {
   sid?: string
   rname?: string
   /** IED: elementos do diagrama monitorados/alimentando o relé (ids): disjuntor, TC (correntes) e TP (tensões). */
-  links?: { breaker?: number; tc?: number; tp?: number }
+  links?: { breaker?: number; tc?: number; tp?: number; tps?: number }
   /** IED: atalhos exibidos no painel flutuante, posição do painel (px no canvas) e se está expandido. */
   sc?: Shortcut[]
+  /** Elemento Texto: conteúdo (várias linhas separadas por \n). */
+  text?: string
   scPos?: { x: number; y: number }
   scOpen?: boolean
 }
@@ -109,6 +111,17 @@ export interface KindInfo {
  *  1 = seguidor de rede (P/Q constantes, nunca forma a rede), 2 = formador de rede (fonte de tensão; vários formadores na mesma ilha dividem a carga em paralelo). */
 export const INVERTER_MODES = [{ v: 0, l: 'Automático (padrão)' }, { v: 1, l: 'Seguidor de rede (P/Q)' }, { v: 2, l: 'Formador de rede (tensão)' }]
 
+/** Cores do elemento Texto (variáveis de tema). */
+export const TEXT_COLORS = [{ v: 0, l: 'Padrão' }, { v: 1, l: 'Azul' }, { v: 2, l: 'Verde-água' }, { v: 3, l: 'Vermelho' }, { v: 4, l: 'Cinza' }]
+export const TEXT_COLOR_VAR = ['var(--ink)', 'var(--accent)', 'var(--accent-2)', 'var(--err)', 'var(--muted)']
+
+/** Fase medida por um TP monofásico (fase-neutro): índice guardado em `ph`. */
+export const TP_PHASES = ['A', 'B', 'C']
+/** Índice da fase do TP monofásico, limitado a A/B/C (diagramas antigos podiam ter fase-fase). */
+export const tpPhase = (el: El): number => Math.min(2, Math.max(0, Math.round(num(el, 'ph'))))
+/** Rótulo do TP no unifilar: "3φ" ou "1φ A". */
+export const tpTag = (el: El): string => (num(el, 'phases') === 1 ? `1φ ${TP_PHASES[tpPhase(el)]}` : '3φ')
+
 export const KINDS: Record<Kind, KindInfo> = {
   source: {
     label: 'Fonte',
@@ -191,8 +204,10 @@ export const KINDS: Record<Kind, KindInfo> = {
   tp: {
     label: 'TP',
     prefix: 'TP',
-    defaults: { vp: 13.8, vs: 115 },
+    defaults: { vp: 13.8, vs: 115, phases: 3, ph: 0 },
     fields: [
+      { key: 'phases', label: 'Tipo do TP', type: 'select', options: [{ v: 3, l: 'Trifásico' }, { v: 1, l: 'Monofásico' }] },
+      { key: 'ph', label: 'Fase utilizada (monofásico)', type: 'select', options: TP_PHASES.map((l, v) => ({ v, l })) },
       { key: 'vp', label: 'Primário (fase-fase)', unit: 'kV', type: 'number', min: 0 },
       { key: 'vs', label: 'Secundário (fase-fase)', unit: 'V', type: 'number', min: 0 },
     ],
@@ -221,6 +236,16 @@ export const KINDS: Record<Kind, KindInfo> = {
       { key: 'q', label: 'Q (+ injeta reativo)', unit: 'Mvar', type: 'number' },
       { key: 'eff', label: 'Rendimento', unit: '%', type: 'number', min: 1 },
       { key: 'vac', label: 'Tensão CA nominal (fase-fase; usada ao formar rede ilhada)', unit: 'kV', type: 'number', min: 0.001 },
+    ],
+  },
+  text: {
+    label: 'Texto',
+    prefix: 'TX',
+    defaults: { size: 16, bold: false, color: 0 },
+    fields: [
+      { key: 'size', label: 'Tamanho da fonte', unit: 'px', type: 'number', min: 6 },
+      { key: 'bold', label: 'Negrito', type: 'bool' },
+      { key: 'color', label: 'Cor', type: 'select', options: TEXT_COLORS },
     ],
   },
   line: {
@@ -262,7 +287,7 @@ export const KINDS: Record<Kind, KindInfo> = {
   },
 }
 
-export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'transformer3', 'line', 'load', 'battery', 'inverter', 'tp', 'tc', 'fault', 'ied']
+export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'transformer3', 'line', 'load', 'battery', 'inverter', 'tp', 'tc', 'fault', 'ied', 'text']
 
 /** Parâmetro numérico; ausente (diagrama salvo antes do parâmetro existir) = valor padrão do tipo. */
 export function num(el: El, key: string): number {
@@ -280,6 +305,7 @@ export function localPorts(el: El): [number, number][] {
     case 'line': return [[-60, 0], [60, 0], [0, -8]]              // 0 e 1 = extremos; 2 = ponto central (derivação para uma falta)
     case 'transformer3': return [[-60, 0], [60, -20], [60, 20]]   // 0 = P (esquerda), 1 = S (direita, acima), 2 = T (direita, abaixo)
     case 'fault': return [[0, 40]]               // ponto de ligação sai da ponta (seta) do raio, de cima para baixo
+    case 'text': return []                         // sem terminais
     case 'ied': return []                          // sem terminais: relés do mesmo projeto IEC61850 se comunicam
     case 'battery': return [[40, 0]]              // terminal CC
     case 'inverter': return [[-40, 0], [40, 0]]   // 0 = CC (bateria), 1 = CA (rede)
@@ -328,6 +354,13 @@ export function hitRect(el: El): [number, number, number, number] {
     case 'battery': return [-40, -24, 80, 48]
     case 'inverter': return [-40, -24, 80, 48]
     case 'ied': return [-28, -36, 56, 72]
+    case 'text': {
+      const lines = (el.text ?? 'Texto').split('\n')
+      const size = Math.max(6, num(el, 'size'))
+      const w = Math.max(30, Math.max(...lines.map((l) => l.length)) * size * 0.62 + 10)
+      const h = lines.length * size * 1.25 + 6
+      return [-w / 2, -h / 2, w, h]
+    }
     case 'load': return [-40, -18, 60, 36]
     case 'tp': return [-20, -40, 40, 68]
     case 'fault': return [-20, -40, 40, 80]
@@ -340,5 +373,5 @@ export function makeElement(kind: Kind, id: number, x: number, y: number, existi
   const n = existing.filter((e) => e.kind === kind).length + 1
   let name = `${info.prefix}${n}`
   while (existing.some((e) => e.name === name)) name = `${info.prefix}${(Number(name.slice(info.prefix.length)) || n) + 1}`
-  return { id, kind, x, y, rot: 0, name, p: { ...info.defaults } }
+  return { id, kind, x, y, rot: 0, name, p: { ...info.defaults }, ...(kind === 'text' ? { text: 'Texto' } : {}) }
 }

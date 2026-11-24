@@ -14,7 +14,7 @@
  * - Falta (opcional, `withFault`): estudo por componentes simétricas (redes de seq. positiva, negativa e zero) com a falta no terminal do
  *   elemento Falta; ver `faultStudy` no fim do arquivo.
  */
-import { FAULT_TYPES, busCells, flag, isComm, num, t3group, vgroup, type El, type Wire } from './model'
+import { FAULT_TYPES, busCells, flag, isComm, num, t3group, tpPhase, vgroup, type El, type Wire } from './model'
 
 export const DEFAULT_SBASE = 100 // MVA
 /** Potência de base (MVA) da última chamada de `solve` (módulo síncrono: ajustada no início de cada cálculo). */
@@ -122,6 +122,20 @@ function ratingNote(names: string[], bases: number[], rated: number[]): string |
   return bad.length ? `Tensão do sistema diferente da nominal do enrolamento (${bad.map((x) => `${x.n}: ${x.b.toFixed(2)} kV no sistema × ${x.r} kV nominal`).join('; ')}). Ajuste as tensões nominais do transformador.` : undefined
 }
 
+/** Grandeza medida pelo TP (kV e ângulo): trifásico = tensão fase-fase; monofásico = tensão fase-neutro da fase escolhida (A, B ou C). `L`/`th` = fase-fase e ângulo de A. */
+function tpQuantity(e: El, L: number, th: number): { kv: number; ang: number } {
+  if (num(e, 'phases') !== 1) return { kv: L, ang: th }
+  const ln = L / Math.sqrt(3)
+  return [{ kv: ln, ang: th }, { kv: ln, ang: th - 120 }, { kv: ln, ang: th + 120 }][tpPhase(e)]
+}
+
+/** Idem, a partir dos fasores fase-neutro de uma falta (`llMin` = menor tensão fase-fase, usada pelo TP trifásico). */
+function tpFromSet(e: El, v: PhasorSet, llMin: number): { kv: number; ang: number } {
+  if (num(e, 'phases') !== 1) return { kv: llMin, ang: v.a.ang }
+  const p = [v.a, v.b, v.c][tpPhase(e)]
+  return { kv: p.mag, ang: p.ang }
+}
+
 /** Pares de terminais do transformador de 3 enrolamentos: P–S, P–T, S–T. */
 const T3_PAIRS: [number, number][] = [[0, 1], [0, 2], [1, 2]]
 interface T3Info { z: [Cx, Cx, Cx]; y: [Cx, Cx, Cx]; ph: [number, number, number]; w: [number, number, number] }
@@ -159,7 +173,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
   SBASE = Number.isFinite(sbase) && sbase > 0 ? sbase : DEFAULT_SBASE
   // elementos de comunicação (IED, Rede) e suas ligações não participam do cálculo elétrico
   const comm = new Set(allEls.filter((e) => isComm(e.kind)).map((e) => e.id))
-  const els = allEls.filter((e) => !comm.has(e.id) && (energize || e.kind !== 'source'))
+  const els = allEls.filter((e) => !comm.has(e.id) && e.kind !== 'text' && (energize || e.kind !== 'source'))
   const wires = allWires.filter((w) => !comm.has(w.a[0]) && !comm.has(w.b[0]))
   // ---- nós elétricos: terminais ligados por fios (e todos os terminais de um barramento) formam um nó
   const idx = new Map<string, number>()
@@ -528,7 +542,8 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
     } else if (e.kind === 'tp') {
       r.v = [kv(n0)]
       const vp = Math.max(num(e, 'vp'), 1e-9)
-      r.extra = { vsec: (r.v[0].mag / vp) * num(e, 'vs'), ratio: (vp * 1000) / Math.max(num(e, 'vs'), 1e-9) }
+      const q = tpQuantity(e, r.v[0].mag, r.v[0].ang)
+      r.extra = { vsec: (q.kv / vp) * num(e, 'vs'), ratio: (vp * 1000) / Math.max(num(e, 'vs'), 1e-9), kvm: q.kv, angm: q.ang, lna: r.v[0].mag / Math.sqrt(3), anga: r.v[0].ang }
     } else if (e.kind === 'transformer3') {
       const t = t3Z.get(e.id)
       const ns = [n0, node(e, 1), node(e, 2)]
@@ -976,7 +991,8 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
     }
     if (e.kind === 'tp') {
       const vp = Math.max(num(e, 'vp'), 1e-9)
-      r.extra = { ...r.extra, vsec: (r.v[0].mag / vp) * num(e, 'vs') }
+      const q = tpFromSet(e, ts[0].v, r.v[0].mag)
+      r.extra = { ...r.extra, vsec: (q.kv / vp) * num(e, 'vs'), kvm: q.kv, angm: q.ang, lna: ts[0].v.a.mag, anga: ts[0].v.a.ang }
     }
     if (e.kind === 'fault') {
       r.extra = { ...r.extra, ifault: e.id === fe.id ? maxI(ts[0].i).mag : 0, pos: e.id === fe.id && fl ? Math.min(100, Math.max(0, num(fe, 'pos'))) : -1 }

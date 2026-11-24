@@ -1,4 +1,4 @@
-import { busCells, flag, isBar, type El, type Kind } from './model'
+import { TEXT_COLOR_VAR, busCells, flag, isBar, num, tpTag, type El, type Kind } from './model'
 
 interface Props {
   kind: Kind
@@ -8,10 +8,12 @@ interface Props {
   cells?: number
   /** Disjuntor/seccionadora de circuito CC: mostra a marca "CC". */
   dc?: boolean
+  /** TP: rótulo "3φ" / "1φ A". */
+  tag?: string
 }
 
 /** Símbolo unifilar na orientação original, centrado em (0,0); terminais em ±40 (ou conforme o tipo). */
-export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false }: Props) {
+export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false, tag }: Props) {
   const s = { stroke: color, fill: 'none', strokeWidth: 2, strokeLinecap: 'round' as const }
   switch (kind) {
     case 'source':
@@ -75,6 +77,9 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
       )
     case 'bus':
       return <line x1={-cells * 10} y1={0} x2={cells * 10} y2={0} stroke={color} strokeWidth={6} strokeLinecap="round" />
+    case 'text':
+      // ícone da barra de elementos
+      return <text x={0} y={12} textAnchor="middle" fontSize={34} fontWeight={700} fill={color} stroke="none" fontFamily="Montserrat, Segoe UI, sans-serif">Aa</text>
     case 'ied':
       // frontal de relé: corpo azul, display e dois botões (sem nome do modelo)
       return (
@@ -132,6 +137,7 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
           <path d="M -16.2 -19 A 8.1 8.1 0 0 0 0 -19 A 8.1 8.1 0 0 0 16.2 -19" />
           <path d="M -16.2 3.5 A 8.1 8.1 0 0 1 0 3.5 A 8.1 8.1 0 0 1 16.2 3.5" />
           <line x1={0} y1={3.5} x2={0} y2={24.5} />
+          {tag && <text x={22} y={-24} fontSize={11} fontWeight={700} fill={color} stroke="none" fontFamily="Montserrat, Segoe UI, sans-serif">{tag}</text>}
         </g>
       )
     case 'fault':
@@ -153,6 +159,20 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
   }
 }
 
+/** Elemento Texto: várias linhas centradas, com tamanho, negrito e cor. */
+function TextShape({ el }: { el: El }) {
+  const lines = (el.text ?? 'Texto').split('\n')
+  const size = Math.max(6, num(el, 'size'))
+  const fill = TEXT_COLOR_VAR[Math.round(num(el, 'color'))] ?? TEXT_COLOR_VAR[0]
+  const y0 = -((lines.length - 1) * size * 1.25) / 2 + size * 0.35
+  return (
+    <text x={0} y={y0} textAnchor="middle" fontSize={size} fontWeight={flag(el, 'bold') ? 700 : 400} fill={fill} stroke="none" fontFamily="Montserrat, Segoe UI, sans-serif" pointerEvents="none">
+      {lines.map((l, i) => <tspan key={i} x={0} dy={i === 0 ? 0 : size * 1.25}>{l || ' '}</tspan>)}
+    </text>
+  )
+}
+
 export function ElementSymbol({ el, color }: { el: El; color: string }) {
-  return <SymbolShape kind={el.kind} color={color} closed={flag(el, 'closed')} dc={flag(el, 'dc')} cells={isBar(el.kind) ? busCells(el) : undefined} />
+  if (el.kind === 'text') return <TextShape el={el} />
+  return <SymbolShape kind={el.kind} color={color} closed={flag(el, 'closed')} dc={flag(el, 'dc')} cells={isBar(el.kind) ? busCells(el) : undefined} tag={el.kind === 'tp' ? tpTag(el) : undefined} />
 }

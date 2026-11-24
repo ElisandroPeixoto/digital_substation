@@ -614,3 +614,10 @@ td.files { background: var(--soft); }
 /* Home: só o ícone e o nome (sem o cartão/contorno ao redor) */
 .ecl-app { background: transparent; border: 0; box-shadow: none; padding: 8px; width: 150px; }
 .ecl-app:hover { background: transparent; border: 0; box-shadow: none; transform: translateY(-4px); }
+
+/* SystemLab: elemento Texto */
+.sl-field.col { flex-direction: column; align-items: stretch; gap: 4px; }
+.sl-textarea { width: 100%; resize: vertical; font-family: inherit; }
+
+/* Elemento Texto: caixa de edição na largura total do painel */
+.sl-field.col .sl-textarea { width: 100%; min-width: 0; box-sizing: border-box; min-height: 110px; resize: vertical; font: inherit; padding: 8px 10px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }

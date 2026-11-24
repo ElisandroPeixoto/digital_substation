@@ -3,7 +3,7 @@ import { api } from '../api'
 import { simTime, usePrefs } from '../prefs'
 import type { SessionBrief } from '../types'
 import {
-  BUS_MAX_CELLS, FAULT_TYPES, GRID, KINDS, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
+  BUS_MAX_CELLS, FAULT_TYPES, GRID, KINDS, TP_PHASES, tpPhase, tpTag, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
   type Diagram, type El, type Kind, type PortRef,
 } from './model'
 import { DEFAULT_SBASE, solve, type ElResult, type FaultStudy, type Ph, type PhasorSet } from './solver'
@@ -129,6 +129,44 @@ function TrashIcon() {
       <path d="M6.5 7l1 13h9l1-13" />
       <path d="M10 11v5M14 11v5" />
     </svg>
+  )
+}
+
+const BULLET = '• '
+
+/** Editor do elemento Texto: caixa larga com marcadores (•): "- " no início da linha vira "• ";
+ *  Enter em uma linha com marcador continua a lista (Enter em um marcador vazio encerra a lista). */
+function TextEditor({ value, onChange }: { value: string; onChange: (t: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const caret = useRef<[number, number] | null>(null)
+  useEffect(() => {
+    if (caret.current && ref.current) { ref.current.setSelectionRange(caret.current[0], caret.current[1]); caret.current = null }
+  })
+  const set = (t: string, a: number, b = a) => { caret.current = [a, b]; onChange(t) }
+  const lineBounds = (v: string, pos: number): [number, number] => [v.lastIndexOf('\n', pos - 1) + 1, (() => { const i = v.indexOf('\n', pos); return i < 0 ? v.length : i })()]
+  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey) return
+    const ta = e.currentTarget
+    const v = ta.value
+    const pos = ta.selectionStart
+    const [ls] = lineBounds(v, pos)
+    const line = v.slice(ls, pos)
+    if (!line.startsWith(BULLET)) return
+    e.preventDefault()
+    if (line === BULLET) set(v.slice(0, ls) + v.slice(pos), ls)                   // marcador vazio: encerra a lista
+    else set(v.slice(0, pos) + '\n' + BULLET + v.slice(ta.selectionEnd), pos + 1 + BULLET.length)
+  }
+  const onText = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const ta = e.target
+    const pos = ta.selectionStart
+    const t = ta.value.replace(/(^|\n)[-*] /g, '$1' + BULLET)                      // "- " ou "* " no início da linha vira marcador
+    if (t !== ta.value) set(t, pos)
+    else onChange(t)
+  }
+  return (
+    <div className="sl-field col">
+      <textarea ref={ref} className="sl-textarea" rows={6} aria-label="Texto" value={value} onKeyDown={onKey} onChange={onText} />
+    </div>
   )
 }
 
@@ -279,6 +317,7 @@ function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
   if (!r) return []
   switch (el.kind) {
     case 'ied': return []
+    case 'text': return []
     case 'battery': return [`SOC ${fmt(r.extra.soc, 0)}% · ${fP(r.extra.pdc)}`, r.note ?? '']
     case 'inverter': return [r.energized ? `${fP(r.extra.p)} · ${fQ(r.extra.q)}` : (r.note ?? 'inativo'), ...(r.energized && r.note ? [r.note] : [])]
     case 'bus': return [r.energized ? fV(r.v[0], r.kvb?.[0]) : 'desenergizado']
@@ -295,7 +334,7 @@ function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
     case 'transformer': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'transformer3': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'line': return r.energized ? [`${fmt(r.extra.len, 1)} km · ${fIm(r.i[0].mag, r.kvb?.[0])}`] : [`${fmt(r.extra.len, 1)} km`]
-    case 'tp': return [r.energized ? `${fmt(r.extra.vsec, 1)} V` : 'desenergizado']
+    case 'tp': return [r.energized ? `${tpTag(el)} · ${fmt(r.extra.vsec, 1)} V` : tpTag(el)]
     case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${r.extra.pos >= 0 ? ` @ ${fmt(r.extra.pos, 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}` : 'sem corrente'}`] : ['desligada']
   }
 }
@@ -438,7 +477,8 @@ export function SystemLabApp() {
       } else { st.rel = undefined; st.diag = undefined }
       const tc = L.tc != null ? elById.get(L.tc) : undefined
       const tp = L.tp != null ? elById.get(L.tp) : undefined
-      if (tc?.kind === 'tc' || tp?.kind === 'tp') {
+      const tps = L.tps != null ? elById.get(L.tps) : undefined               // TP de sincronismo: alimenta a entrada VS do relé
+      if (tc?.kind === 'tc' || tp?.kind === 'tp' || tps?.kind === 'tp') {
         const patch: Record<string, number | boolean> = { analog_on: true }
         const r = tc?.kind === 'tc' ? sol.res.get(tc.id) : undefined
         const ft = tc?.kind === 'tc' ? sol.fault?.terms.get(tc.id)?.[0] : undefined      // em falta: fasores por fase
@@ -456,11 +496,20 @@ export function SystemLabApp() {
         if (tp?.kind === 'tp') {
           const mag = rv?.energized ? (rv.v[0].mag * 1000) / Math.sqrt(3) : 0
           const ang = rv?.energized ? rv.v[0].ang : 0
-          if (fv && rv?.energized) {
+          const mono = num(tp, 'phases') === 1
+          if (mono && rv?.energized) {                                          // TP monofásico: só a fase medida chega ao relé
+            const n = ['a', 'b', 'c'][tpPhase(tp)]
+            Object.assign(patch, { va_mag: 0, vb_mag: 0, vc_mag: 0, [`v${n}_mag`]: rv.extra.kvm * 1000, [`v${n}_ang`]: rv.extra.angm })
+          } else if (fv && rv?.energized) {
             Object.assign(patch, { va_mag: fv.v.a.mag * 1000, vb_mag: fv.v.b.mag * 1000, vc_mag: fv.v.c.mag * 1000, va_ang: fv.v.a.ang, vb_ang: fv.v.b.ang, vc_ang: fv.v.c.ang })
           } else {
             Object.assign(patch, { va_mag: mag, vb_mag: mag, vc_mag: mag, va_ang: ang, vb_ang: ang - 120, vc_ang: ang + 120 })
           }
+        }
+        if (tps?.kind === 'tp' && num(tps, 'phases') === 1) {                  // só TP monofásico alimenta o VS
+          const rs = sol.res.get(tps.id)
+          if (rs?.energized) Object.assign(patch, { vs_mag: rs.extra.kvm * 1000, vs_ang: rs.extra.angm })
+          else Object.assign(patch, { vs_mag: 0 })
         }
         const key = JSON.stringify(patch, (_, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v))
         if (key !== st.sent || now - st.t > 5000) {
@@ -512,7 +561,7 @@ export function SystemLabApp() {
   const rotateSel = useCallback(() => {
     if (sel?.type !== 'el') return
     const ids = new Set(sel.ids)
-    setDg((d) => ({ ...d, els: d.els.map((e) => (ids.has(e.id) ? { ...e, rot: (e.rot + 1) % 4 } : e)) }))
+    setDg((d) => ({ ...d, els: d.els.map((e) => (ids.has(e.id) && e.kind !== 'text' ? { ...e, rot: (e.rot + 1) % 4 } : e)) }))
   }, [sel])
 
   // ---- copiar e colar
@@ -569,7 +618,7 @@ export function SystemLabApp() {
           delete copy.sid; delete copy.rname; delete copy.sc; delete copy.scPos; delete copy.scOpen
           if (e.links) {
             const links: NonNullable<El['links']> = {}
-            for (const key of ['breaker', 'tc', 'tp'] as const) { const v = e.links[key]; if (v != null && map.has(v)) links[key] = map.get(v) }
+            for (const key of ['breaker', 'tc', 'tp', 'tps'] as const) { const v = e.links[key]; if (v != null && map.has(v)) links[key] = map.get(v) }
             copy.links = links
           }
         }
@@ -1115,13 +1164,19 @@ export function SystemLabApp() {
                   <g
                     transform={`translate(${el.x} ${el.y}) rotate(${el.rot * 90})`}
                     onPointerDown={(e) => onElDown(e, el)}
-                    onDoubleClick={() => (el.kind === 'breaker' || el.kind === 'switch') && updateEl(el.id, (x) => ({ ...x, p: { ...x.p, closed: !flag(x, 'closed') } }))}
+                    onDoubleClick={() => {
+                      if (el.kind === 'breaker' || el.kind === 'switch') updateEl(el.id, (x) => ({ ...x, p: { ...x.p, closed: !flag(x, 'closed') } }))
+                      else if (el.kind === 'text') {                       // duplo clique: edita o texto (use \n na caixa de propriedades para várias linhas)
+                        const t = window.prompt('Texto:', (el.text ?? '').replace(/\n/g, ' ↵ '))
+                        if (t != null) updateEl(el.id, (x) => ({ ...x, text: t.replace(/ ↵ /g, '\n') }))
+                      }
+                    }}
                     style={{ cursor: 'move' }}
                   >
                     <rect x={hx} y={hy} width={hw} height={hh} fill="transparent" stroke={selected ? 'var(--accent-2)' : 'none'} strokeDasharray="4 3" rx={4} />
                     <ElementSymbol el={el} color={color} />
                   </g>
-                  {!dragging && !hidden && <text x={lab[0]} y={lab[1]} textAnchor={vertBus ? 'start' : 'middle'} className="sl-name" fill="var(--ink)" pointerEvents="none">{el.name}</text>}
+                  {!dragging && !hidden && el.kind !== 'text' && <text x={lab[0]} y={lab[1]} textAnchor={vertBus ? 'start' : 'middle'} className="sl-name" fill="var(--ink)" pointerEvents="none">{el.name}</text>}
                   {lines.map((t, i) => (
                     <text key={i} x={lab[0]} y={lab[1] + 12 * (i + 1)} textAnchor={vertBus ? 'start' : 'middle'} className="sl-val" fill={on ? 'var(--accent-2)' : 'var(--muted)'} pointerEvents="none">{t}</text>
                   ))}
@@ -1203,11 +1258,15 @@ export function SystemLabApp() {
         {!panels.side ? <span className="sl-vlabel">Propriedades e resultados</span> : selEl ? (
           <>
             <h3>{KINDS[selEl.kind].label}</h3>
-            <label className="sl-field">
-              <span>Nome</span>
-              <input type="text" className="numinput" value={selEl.name} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, name: e.target.value }))} />
-            </label>
-            {KINDS[selEl.kind].fields.filter((f) => !(f.key === 'closed' && (selEl.kind === 'breaker' || selEl.kind === 'switch'))).map((f) => (
+            {selEl.kind === 'text' ? (
+              <TextEditor key={selEl.id} value={selEl.text ?? ''} onChange={(t) => updateEl(selEl.id, (x) => ({ ...x, text: t }))} />
+            ) : (
+              <label className="sl-field">
+                <span>Nome</span>
+                <input type="text" className="numinput" value={selEl.name} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, name: e.target.value }))} />
+              </label>
+            )}
+            {KINDS[selEl.kind].fields.filter((f) => !(f.key === 'closed' && (selEl.kind === 'breaker' || selEl.kind === 'switch')) && !(f.key === 'ph' && num(selEl, 'phases') !== 1)).map((f) => (
               <label key={f.key} className="sl-field">
                 <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
                 {f.type === 'bool' ? (
@@ -1256,13 +1315,13 @@ export function SystemLabApp() {
                 )}
                 {selEl.sid && (
                   <>
-                    {([['breaker', 'Disjuntor monitorado', 'breaker'], ['tc', 'TC (correntes)', 'tc'], ['tp', 'TP (tensões)', 'tp']] as const).map(([key, label, kind]) => (
+                    {([['breaker', 'Disjuntor monitorado', 'breaker'], ['tc', 'TC (correntes)', 'tc'], ['tp', 'TP (tensões)', 'tp'], ['tps', 'TP de sincronismo (VS)', 'tp']] as const).map(([key, label, kind]) => (
                       <label className="sl-field" key={key}>
                         <span>{label}</span>
                         <select className="numinput" value={selEl.links?.[key] ?? ''}
                           onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, links: { ...x.links, [key]: e.target.value === '' ? undefined : Number(e.target.value) } }))}>
                           <option value="">— nenhum —</option>
-                          {dg.els.filter((x) => x.kind === kind).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                          {dg.els.filter((x) => x.kind === kind && (key !== 'tps' || num(x, 'phases') === 1)).map((x) => <option key={x.id} value={x.id}>{x.name}{key === 'tps' ? ` (${tpTag(x)})` : ''}</option>)}
                         </select>
                       </label>
                     ))}
@@ -1281,8 +1340,8 @@ export function SystemLabApp() {
                 {(selEl.kind === 'breaker' || selEl.kind === 'switch') && (
                   <button className="primary" onClick={() => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, closed: !flag(x, 'closed') } }))} title="Abre ou fecha (também por duplo clique no símbolo)"><span className="ic"><SwitchIcon closed={!flag(selEl, 'closed')} /></span><span>{flag(selEl, 'closed') ? 'Abrir' : 'Fechar'}</span></button>
                 )}
-                <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title="Mostra ou oculta o nome e os dados deste elemento no diagrama"><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>
-                <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (R)</span></button>
+                {selEl.kind !== 'text' && <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title="Mostra ou oculta o nome e os dados deste elemento no diagrama"><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>}
+                {selEl.kind !== 'text' && <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (R)</span></button>}
                 <button className="danger" onClick={removeSel}><span className="ic"><TrashIcon /></span><span>Excluir</span></button>
               </div>
             </div>
@@ -1441,7 +1500,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
           ))}
         </tbody>
       </table>
-      {el.kind === 'tp' && <p className="hint">Tensão secundária: <b>{fmt(r.extra.vsec, 2)} V</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
+      {el.kind === 'tp' && <p className="hint">TP {num(el, 'phases') === 1 ? `monofásico, fase ${TP_PHASES[tpPhase(el)]}` : 'trifásico'}. Tensão secundária: <b>{fmt(r.extra.vsec, 2)} V</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
       {el.kind === 'transformer3' && <p className="hint">Terminais: 1 = P (primário), 2 = S (secundário), 3 = T (terciário). Carregamento de P: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fP(r.extra.loss, 3)}</b></p>}
       {el.kind === 'line' && <p className="hint">Impedância total (seq. +): <b>{fmt(r.extra.rt, 3)} + j{fmt(r.extra.xt, 3)} Ω</b> · comprimento {fmt(r.extra.len, 1)} km · perdas {fP(r.extra.loss, 3)}</p>}
       {el.kind === 'tc' && <p className="hint">Corrente secundária: <b>{fmt(r.extra.isec, 3)} A</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}

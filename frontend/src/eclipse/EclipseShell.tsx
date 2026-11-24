@@ -32,7 +32,7 @@ function AppSwitcher({ route }: { route: Route }) {
             </a>
           ))}
           <hr />
-          <a role="menuitem" href="#/" onClick={() => setOpen(false)}>Home</a>
+          <a role="menuitem" href="#/" onClick={() => setOpen(false)}>Início</a>
         </div>
       )}
     </div>
@@ -48,8 +48,8 @@ export function EclipseHeader({ route }: { route: Route }) {
       </a>
       {routeTitle(route) && <span className="ecl-current" aria-live="polite">{routeTitle(route)}</span>}
       <nav className="ecl-nav">
-        <a href="#/" className={route === 'home' ? 'active' : ''}>Home</a>
-        <a href="#/about" className={route === 'about' ? 'active' : ''}>About</a>
+        <a href="#/" className={route === 'home' ? 'active' : ''}>Início</a>
+        <a href="#/about" className={route === 'about' ? 'active' : ''}>Sobre</a>
       </nav>
       <AppSwitcher route={route} />
       <button className="theme-toggle" onClick={toggle} title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'} aria-label="Alternar modo claro/escuro">
