@@ -57,6 +57,7 @@ run.ps1                             instala, compila o frontend e sobe em http:/
 | `selogic.py` | Interpretador SELogic. **Sem curto-circuito** (as bordas `R_TRIG/F_TRIG` precisam ser avaliadas todo ciclo). Primeira avaliação nunca gera borda. |
 | `curves.py` | Curvas U1–U5 / C1–C5 / E1–E3 (equações do manual, tabelas 4.20–4.22), reset eletromecânico, saturação `51SAT` (M ≤ 30). |
 | `directional.py` | Controle direcional (67): Q/V/S/U/P, PHI, fase por seq. positiva, `EDIR`/`ORDER`/`DIRn`, bits `xnDIR` que habilitam os 50/51 (`_Element.dir_key`). Roda **antes** dos elementos em cada `step`; `LOP` é uma chave do usuário (`SimConfig.lop`). |
+| `protection_v.py` | 27I/59I (tempo inverso), 3P27/3P59, 25 (sincronismo, VS na injeção), 3PWR (32) e 593SRMS; criados por `build_extra` junto com os de `protection.py` (que cobre 27/59 níveis 1–4, VS incluído). Testes `test_voltage_sync_power.py`. |
 | `protection.py` | Elementos 50/51/27/59/81D do grupo ativo; pickup `OFF` = desabilitado (bits registrados com 0). 50: bits `50xnP/T` (+ `50A/B/C1P`, `50A/B/C2P`), `50xnD = OFF` desabilita; 51: `51xP/T/R`, CT, MR, reset 1 ciclo ou EM; `ORED50T/ORED51T`. |
 | `fieldsim.py` | Fasores, tipos de falta (AG BG CG AB BC CA ABC), afundamento, modelo do disjuntor, presets. |
 | `engine.py` | `RelayEngine.step(dt)`: ciclo de varredura, TRIP, CLOSE, religamento 79, SV/SC/MV/LT/OUT, grupos, SER, snapshots. |
@@ -124,8 +125,8 @@ Decisões que afetam o comportamento (verificar contra relé real se possível):
   `NOT_SUPPORTED`; `Select→Operate` vale 10 s simulados.
 - Resolução 4 ms a 1× (múltiplos nas outras velocidades: 10× → 40 ms): os alarmes de tempo de abertura (100/120/140 ms) são mais confiáveis em 1×.
 
-Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: IGF/condutância incremental/canal IN por corrente do 67, 49, 46, 50INC, HIF, 52ABF interno, 25, 78, 55,
-`E27I/E59I`, demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em rede.
+Detalhes e limitações: `docs/logica-simulada.md`. **Não implementado**: IGF/condutância incremental/canal IN por corrente do 67, 49, 46, 50INC, HIF, 52ABF interno, 78, 55,
+demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em rede.
 
 ## Convenções e cuidados
 

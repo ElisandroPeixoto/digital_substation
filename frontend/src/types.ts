@@ -46,6 +46,7 @@ export interface SessionInfo {
   ctr: number
   ctrn: number
   ptr: number
+  ptrs?: number           // relação do TP de sincronismo (PTRS)
   vnom: number
   presets: Record<string, string>
   fault_types: string[]
@@ -78,6 +79,9 @@ export interface SimConfig {
   vc_mag: number
   vc_ang: number
   freq: number
+  vs_mag: number
+  vs_ang: number
+  vs_freq: number
   vdc: number
   open_ms: number
   close_ms: number

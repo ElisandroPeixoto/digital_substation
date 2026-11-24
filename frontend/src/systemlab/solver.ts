@@ -116,6 +116,12 @@ class UF {
   union(a: number, b: number) { this.p[this.find(a)] = this.find(b) }
 }
 
+/** Aviso quando a tensão de base do sistema em um terminal difere da nominal do enrolamento (mais de 20 %): as impedâncias do transformador ficam fora de escala. */
+function ratingNote(names: string[], bases: number[], rated: number[]): string | undefined {
+  const bad = names.map((n, k) => ({ n, b: bases[k], r: rated[k] })).filter((x) => x.b > 0 && x.r > 0 && Math.abs(x.b / x.r - 1) > 0.2)
+  return bad.length ? `Tensão do sistema diferente da nominal do enrolamento (${bad.map((x) => `${x.n}: ${x.b.toFixed(2)} kV no sistema × ${x.r} kV nominal`).join('; ')}). Ajuste as tensões nominais do transformador.` : undefined
+}
+
 /** Pares de terminais do transformador de 3 enrolamentos: P–S, P–T, S–T. */
 const T3_PAIRS: [number, number][] = [[0, 1], [0, 2], [1, 2]]
 interface T3Info { z: [Cx, Cx, Cx]; y: [Cx, Cx, Cx]; ph: [number, number, number]; w: [number, number, number] }
@@ -212,41 +218,55 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
     inv.p = p; inv.q = q; inv.active = true
     return inv
   })
-  // ilhas CA sem fonte: o primeiro inversor apto forma a rede
+  // formação de rede: modo 2 (formador) sempre forma, e vários formadores na mesma ilha operam em paralelo;
+  // modo 1 (seguidor) nunca forma; modo 0 (automático, padrão): em ilha CA sem fonte nem formador, o primeiro inversor apto forma a rede
   {
     const srcIslands = new Set(els.filter((e) => e.kind === 'source').map((e) => uc.find(node(e, 0))))
     const formed = new Set<number>()
-    for (const v of invs) {
-      const root = uc.find(v.nAc)
-      if (!v.active || !v.canForm || srcIslands.has(root) || formed.has(root)) continue
-      formed.add(root)
+    const makeForming = (v: Inv, note: string) => {
       v.forming = true
-      v.note = 'formando rede (ilhado)'
+      v.note = note
       const sn = Math.max(num(v.e, 'sn'), 1e-6)
       v.ys = div(cx(1), zUnit((0.05 * SBASE) / sn, 10))        // impedância interna de 5 % na base do inversor
+    }
+    const explicit = invs.filter((v) => Math.round(num(v.e, 'mode')) === 2 && v.active && v.canForm)
+    for (const v of explicit) formed.add(uc.find(v.nAc))
+    for (const v of explicit) {
+      const root = uc.find(v.nAc)
+      const n = explicit.filter((x) => uc.find(x.nAc) === root).length
+      makeForming(v, n > 1 ? 'formando rede (em paralelo)' : srcIslands.has(root) ? 'formando rede (em paralelo com a rede)' : 'formando rede')
+    }
+    for (const v of invs) {
+      const root = uc.find(v.nAc)
+      if (Math.round(num(v.e, 'mode')) !== 0) continue
+      if (!v.active || !v.canForm || srcIslands.has(root) || formed.has(root)) continue
+      formed.add(root)
+      makeForming(v, 'formando rede (ilhado)')
     }
   }
 
 
   // ---- bases de tensão (kV) por nó: a partir das fontes, trocando de base nos transformadores
   const base = new Map<number, number>()
-  const adj = new Map<number, { to: number; ratio: number }[]>()
-  const link = (a: number, b: number, ratio: number) => {
+  const adj = new Map<number, { to: number; ratio: number; ang: number }[]>()
+  /** `shift` (°): a tensão de b atrasa a de a (índice horário do transformador); usado para alinhar o ângulo dos formadores de rede. */
+  const link = (a: number, b: number, ratio: number, shift = 0) => {
     if (!adj.has(a)) adj.set(a, [])
     if (!adj.has(b)) adj.set(b, [])
-    adj.get(a)!.push({ to: b, ratio })
-    adj.get(b)!.push({ to: a, ratio: 1 / ratio })
+    adj.get(a)!.push({ to: b, ratio, ang: -shift })
+    adj.get(b)!.push({ to: a, ratio: 1 / ratio, ang: shift })
   }
   for (const e of els) {
     if (e.kind === 'breaker' || e.kind === 'switch' || e.kind === 'tc' || e.kind === 'line') link(node(e, 0), node(e, 1), 1)
     if (e.kind === 'transformer') {
       const v1 = Math.max(num(e, 'v1'), 1e-6)
-      link(node(e, 0), node(e, 1), Math.max(num(e, 'v2'), 1e-6) / v1)
+      link(node(e, 0), node(e, 1), Math.max(num(e, 'v2'), 1e-6) / v1, trafoShift(e))
     }
     if (e.kind === 'transformer3') {
       const v1 = Math.max(num(e, 'v1'), 1e-6)
-      link(node(e, 0), node(e, 1), Math.max(num(e, 'v2'), 1e-6) / v1)
-      link(node(e, 0), node(e, 2), Math.max(num(e, 'v3'), 1e-6) / v1)
+      const g3 = t3group(e)
+      link(node(e, 0), node(e, 1), Math.max(num(e, 'v2'), 1e-6) / v1, g3.clk[1] * 30)
+      link(node(e, 0), node(e, 2), Math.max(num(e, 'v3'), 1e-6) / v1, g3.clk[2] * 30)
     }
   }
   const queue: number[] = []
@@ -263,6 +283,21 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
     }
   }
   const bk = (n: number) => base.get(n) ?? 0
+
+  // ângulo de referência por nó: parte do ângulo das fontes (e, em ilhas sem fonte, do primeiro formador de rede, em 0°) e segue a defasagem dos
+  // transformadores; assim formadores em paralelo, de lados diferentes de um transformador, ficam em fase e dividem a carga em vez de circular potência
+  const nodeAng = new Map<number, number>()
+  const spread = (seed: number, a0: number) => {
+    nodeAng.set(seed, a0)
+    const q: number[] = [seed]
+    while (q.length) {
+      const n = q.shift()!
+      for (const { to, ang } of adj.get(n) ?? []) if (!nodeAng.has(to)) { nodeAng.set(to, nodeAng.get(n)! + ang); q.push(to) }
+    }
+  }
+  for (const e of els) if (e.kind === 'source' && !nodeAng.has(node(e, 0))) spread(node(e, 0), num(e, 'ang'))
+  for (const v of invs) if (v.forming && !nodeAng.has(v.nAc)) spread(v.nAc, 0)
+  for (const v of invs) if (v.forming) v.E = polar(1, nodeAng.get(v.nAc) ?? 0)
 
   // ---- ramos e injeções
   const branches: Branch[] = []
@@ -514,6 +549,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
       r.q = pq.map((x) => x[1])
       const loss = r.p.reduce((a, b) => a + b, 0)
       r.extra = { loading: (Math.hypot(r.p[0], r.q[0]) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss }
+      r.note = ratingNote(['P', 'S', 'T'], ns.map((n) => bk(n)), [num(e, 'v1'), num(e, 'v2'), num(e, 'v3')])
       totals.loss += loss
     } else {
       // dois terminais em série: breaker, switch, tc, transformer
@@ -538,6 +574,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
         totals.loss += p1 + p2
       } else if (e.kind === 'transformer') {
         r.extra = { loading: (Math.hypot(p1, q1) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss: p1 + p2 }
+        r.note = ratingNote(['1', '2'], [bk(n0), bk(n1)], [num(e, 'v1'), num(e, 'v2')])
         totals.loss += p1 + p2
       }
     }

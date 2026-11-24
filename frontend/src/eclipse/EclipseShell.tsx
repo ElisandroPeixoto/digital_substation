@@ -28,7 +28,7 @@ function AppSwitcher({ route }: { route: Route }) {
         <div className="ecl-menu" role="menu">
           {APPS.map((a) => (
             <a key={a.id} role="menuitem" href={a.route} className={route === a.id ? 'active' : ''} onClick={() => setOpen(false)}>
-              <span aria-hidden>{a.glyph}</span> {a.name}
+              <img className="ecl-menu-img" src={a.icon} alt="" width={22} height={22} /> {a.name}
             </a>
           ))}
           <hr />
@@ -71,14 +71,13 @@ export function EclipseShell({ route, children }: { route: Route; children: Reac
 export function HomeView() {
   return (
     <main className="ecl-home">
-      <h1 className="ecl-title">
-        <img src="/eclipse-icon.png" alt="" />
-        <span>Eclipse</span>
+      <h1 className="ecl-title logo">
+        <img src="/eclipse-logo.png" alt="Eclipse" />
       </h1>
       <div className="ecl-apps">
         {APPS.map((a) => (
           <a key={a.id} className="ecl-app" href={a.route}>
-            <span className="ecl-app-icon" aria-hidden>{a.glyph}</span>
+            <img className="ecl-app-img" src={a.icon} alt="" width={96} height={96} />
             <b>{a.name}</b>
           </a>
         ))}

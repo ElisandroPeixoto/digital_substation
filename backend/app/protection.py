@@ -1,4 +1,5 @@
-"""Elementos de proteção simulados: 50/51 (sobrecorrente), 27/59 (tensão) e 81D (frequência).
+"""Elementos de proteção simulados: 50/51 (sobrecorrente), 27/59 (tensão, níveis 1 a 4, incluindo VS) e 81D (frequência).
+Os elementos 27I/59I (tempo inverso), 3P27/3P59, 25 (sincronismo), 3PWR (potência) e 593SRMS estão em ``protection_v.py``.
 
 Os elementos são criados a partir dos ajustes do grupo ativo. Pickups em ``OFF``
 desabilitam o elemento. Os bits do Relay Word seguem o padrão do SEL-751
@@ -10,6 +11,7 @@ import re
 from typing import TYPE_CHECKING
 
 from . import curves
+from .protection_v import build_extra
 
 if TYPE_CHECKING:  # pragma: no cover
     from .engine import RelayEngine
@@ -187,7 +189,7 @@ class TimeOc(_Element):
 
 
 class DefiniteElement(_Element):
-    """Elemento de tempo definido: 27 / 59 / 81D."""
+    """Elemento de tempo definido: 27 / 59 (fase, fase-fase, VS, residual, seq. negativa) / 81D."""
 
     def __init__(self, eng, base: str, family: str, pickup: float, delay: float, tc_key: str | None = None) -> None:
         super().__init__(eng, base, tc_key)
@@ -203,6 +205,10 @@ class DefiniteElement(_Element):
             return min(m["VA"], m["VB"], m["VC"]), True
         if f == "27PP":
             return min(m["VAB"], m["VBC"], m["VCA"]), True
+        if f == "27S":
+            return m["VS"], True
+        if f == "59S":
+            return m["VS"], False
         if f == "59P":
             return max(m["VA"], m["VB"], m["VC"]), False
         if f == "59PP":
@@ -234,6 +240,7 @@ class DefiniteElement(_Element):
         unit = "Hz" if self.family == "81D" else "V sec."
         return {
             "name": self.base, "kind": {"27P": "Subtensão fase (27)", "27PP": "Subtensão fase-fase (27)",
+                                        "27S": "Subtensão VS (27)", "59S": "Sobretensão VS (59)",
                                         "59P": "Sobretensão fase (59)", "59PP": "Sobretensão fase-fase (59)",
                                         "59G": "Sobretensão residual (59G)", "59Q": "Sobretensão seq. neg. (59Q)",
                                         "81D": "Frequência (81)"}[self.family],
@@ -247,7 +254,7 @@ class DefiniteElement(_Element):
 
 _RE_INST = re.compile(r"^50([PNGQ])([1-4])P$")
 _RE_TIME = re.compile(r"^51(A|B|C|P1|P2|Q|N1|N2|G1|G2)P$")
-_RE_VOLT = re.compile(r"^(27P|27PP|59P|59PP|59G|59Q)([12])P$")
+_RE_VOLT = re.compile(r"^(27P|27PP|27S|59P|59PP|59S|59G|59Q)([1-4])P$")
 _RE_FREQ = re.compile(r"^81D([1-6])TP$")
 
 
@@ -330,6 +337,7 @@ def build_elements(eng: "RelayEngine") -> tuple[list[_Element], int]:
             elements.append(DefiniteElement(eng, base, "81D", pickup, num(base + "TD", 0.0) or 0.0))
     eng.vals.setdefault("ORED50T", 0.0)
     eng.vals.setdefault("ORED51T", 0.0)
+    elements += build_extra(eng)
     return elements, off
 
 

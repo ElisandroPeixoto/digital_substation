@@ -97,6 +97,41 @@ function parseImport(text: string): { diagram: Diagram; settings?: { sbase: numb
   return { diagram: { els, wires: pruneTaps(wires), nextId }, settings }
 }
 
+/** Ícone de contato (traço simples, na cor do texto): fechado = ligado; aberto = lâmina levantada. */
+function SwitchIcon({ closed }: { closed: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width={20} height={20} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx={4} cy={15} r={1.6} fill="currentColor" />
+      <circle cx={20} cy={15} r={1.6} fill="currentColor" />
+      {closed ? <line x1={4} y1={15} x2={20} y2={15} /> : <line x1={4} y1={15} x2={17} y2={7} />}
+    </svg>
+  )
+}
+
+const ICON = { viewBox: '0 0 24 24', width: 20, height: 20, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
+
+/** Olho (mostrar dados) ou olho riscado (ocultar dados). */
+function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg {...ICON}>
+      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" />
+      <circle cx={12} cy={12} r={2.8} />
+      {off && <line x1={4} y1={20} x2={20} y2={4} />}
+    </svg>
+  )
+}
+
+function TrashIcon() {
+  return (
+    <svg {...ICON}>
+      <path d="M4 7h16" />
+      <path d="M9 7V4.5h6V7" />
+      <path d="M6.5 7l1 13h9l1-13" />
+      <path d="M10 11v5M14 11v5" />
+    </svg>
+  )
+}
+
 function emptyDiagram(): Diagram {
   return { els: [], wires: [], nextId: 1 }
 }
@@ -252,16 +287,16 @@ function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
     case 'breaker':
     case 'switch': {
       if (!flag(el, 'closed')) return ['aberto']
-      const main = r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'}` : 'desenergizado'
+      const main = r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}` : 'desenergizado'
       return r.note ? [main, `⚠ ${r.note}`] : [main]
     }
     case 'tc': if (r.extra.dc) return [`${fmt(r.extra.idc, 1)} A CC`]
-      return [r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'} → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
+      return [r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])} → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
     case 'transformer': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'transformer3': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
-    case 'line': return r.energized ? [`${fmt(r.extra.len, 1)} km · ${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'}`] : [`${fmt(r.extra.len, 1)} km`]
+    case 'line': return r.energized ? [`${fmt(r.extra.len, 1)} km · ${fIm(r.i[0].mag, r.kvb?.[0])}`] : [`${fmt(r.extra.len, 1)} km`]
     case 'tp': return [r.energized ? `${fmt(r.extra.vsec, 1)} V` : 'desenergizado']
-    case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${r.extra.pos >= 0 ? ` @ ${fmt(r.extra.pos, 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}${DISP.pu ? '' : ' A'}` : 'sem corrente'}`] : ['desligada']
+    case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${r.extra.pos >= 0 ? ` @ ${fmt(r.extra.pos, 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}` : 'sem corrente'}`] : ['desligada']
   }
 }
 
@@ -1172,7 +1207,7 @@ export function SystemLabApp() {
               <span>Nome</span>
               <input type="text" className="numinput" value={selEl.name} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, name: e.target.value }))} />
             </label>
-            {KINDS[selEl.kind].fields.map((f) => (
+            {KINDS[selEl.kind].fields.filter((f) => !(f.key === 'closed' && (selEl.kind === 'breaker' || selEl.kind === 'switch'))).map((f) => (
               <label key={f.key} className="sl-field">
                 <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
                 {f.type === 'bool' ? (
@@ -1238,17 +1273,17 @@ export function SystemLabApp() {
                 <p className="hint">Os IEDs associados a relés do mesmo projeto IEC61850 (aba IEC 61850 do DigitalRelay / app IEC61850) se comunicam por GOOSE automaticamente.</p>
               </>
             )}
-            <label className="sl-field">
-              <span>Ocultar nome e dados no diagrama</span>
-              <input type="checkbox" checked={!!selEl.hide} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, hide: e.target.checked }))} />
-            </label>
             <Results el={selEl} r={selRes} />
             <FaultPanel el={selEl} study={study?.fault ?? null} hasFault={hasFault} />
             <div className="sl-actions">
               <h4>Ações</h4>
               <div className="row">
-                <button onClick={rotateSel}>↻ Girar (R)</button>
-                <button className="danger" onClick={removeSel}>🗑 Excluir</button>
+                {(selEl.kind === 'breaker' || selEl.kind === 'switch') && (
+                  <button className="primary" onClick={() => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, closed: !flag(x, 'closed') } }))} title="Abre ou fecha (também por duplo clique no símbolo)"><span className="ic"><SwitchIcon closed={!flag(selEl, 'closed')} /></span><span>{flag(selEl, 'closed') ? 'Abrir' : 'Fechar'}</span></button>
+                )}
+                <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title="Mostra ou oculta o nome e os dados deste elemento no diagrama"><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>
+                <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (R)</span></button>
+                <button className="danger" onClick={removeSel}><span className="ic"><TrashIcon /></span><span>Excluir</span></button>
               </div>
             </div>
           </>
@@ -1383,7 +1418,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
             <tr><td>Corrente CA</td><td className="num">{fI(r.i[1], r.kvb?.[1])}</td></tr>
           </tbody>
         </table>
-        <p className="hint">Com fonte na rede o inversor segue a rede (P/Q constantes, limitados pela potência nominal e pelo SOC). Sem fonte, ele forma a rede (ilhado) e fornece o que a carga consome.</p>
+        <p className="hint">Com fonte na rede o inversor segue a rede (P/Q constantes, limitados pela potência nominal e pelo SOC). Sem fonte, ele forma a rede (ilhado) e fornece o que a carga consome. O modo (Automático, Seguidor ou Formador de rede) é escolhido nas propriedades: vários formadores na mesma ilha dividem a carga em paralelo.</p>
       </div>
     )
   }
@@ -1391,6 +1426,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
     <div className="sl-results">
       <h4>Resultados</h4>
       {r.note && (el.kind === 'breaker' || el.kind === 'switch') && <p className="hint warn">⚠ {r.note}. Ajuste "Circuito CC" nas propriedades.</p>}
+      {r.note && (el.kind === 'transformer' || el.kind === 'transformer3') && <p className="hint warn">⚠ {r.note}</p>}
       <table className="tbl meas">
         <thead><tr><th>Terminal</th><th>Tensão</th><th>Corrente</th><th>{DISP.pu ? 'P (pu)' : 'P (MW)'}</th><th>{DISP.pu ? 'Q (pu)' : 'Q (Mvar)'}</th></tr></thead>
         <tbody>

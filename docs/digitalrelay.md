@@ -215,7 +215,7 @@ variáveis matemáticas, saídas), globais `G` (troca de grupo, filtros das entr
 - **27/59/81D** de tempo definido.
 - Grandezas: `IMAX`, `IA/IB/IC`, `IN` (soma fasorial ÷ `CTRN`), `IG` (÷ `CTR`), `3I2`; pickups em A **secundários**.
 - **Direcional (67):** `EDIR = Y/AUTO/AUTO2`, `DIR1…DIR4`, `ORDER` (Q, V, S, P, U; o canal IN por corrente `I` não), PHI, fase por sequência positiva com memória e `ELOAD`; veja a seção "Controle direcional (67)" de [`logica-simulada.md`](logica-simulada.md). Seção própria em **Variáveis internas** e chave **Perda de potencial (LOP)** nos auxiliares.
-- **Não implementados:** 49, 46, 50INC, HIF, 52ABF interno, 25, 78, 55, `E27I/E59I`, demanda, `79SKP/79SEQ/79DLS/79CLSD`.
+- **Não implementados:** 49, 46, 50INC, HIF, 52ABF interno, 78, 55, demanda, `79SKP/79SEQ/79DLS/79CLSD`.
 
 ### TRIP, CLOSE e religamento
 

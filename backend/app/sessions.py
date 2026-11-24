@@ -38,7 +38,7 @@ class Session:
         return {
             "model": eng.model, "id": self.id, "filename": self.filename, "relay_id": self.relay.id, "device": eng.device_name,
             "header": st.header, "classes": classes, "files": sorted(self.relay.files.keys()),
-            "static": eng.panel.static_info(), "ctr": eng.ctr, "ctrn": eng.ctrn, "ptr": eng.ptr, "vnom": eng.vnom,
+            "static": eng.panel.static_info(), "ctr": eng.ctr, "ctrn": eng.ctrn, "ptr": eng.ptr, "ptrs": eng.ptrs, "vnom": eng.vnom,
             "presets": None, "ied": None,
         }
 

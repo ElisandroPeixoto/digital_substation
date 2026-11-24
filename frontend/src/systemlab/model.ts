@@ -105,6 +105,10 @@ export interface KindInfo {
   fields: Field[]
 }
 
+/** Modo do inversor: 0 = automático (comportamento original: segue a rede; sem fonte na ilha, o primeiro inversor apto forma a rede),
+ *  1 = seguidor de rede (P/Q constantes, nunca forma a rede), 2 = formador de rede (fonte de tensão; vários formadores na mesma ilha dividem a carga em paralelo). */
+export const INVERTER_MODES = [{ v: 0, l: 'Automático (padrão)' }, { v: 1, l: 'Seguidor de rede (P/Q)' }, { v: 2, l: 'Formador de rede (tensão)' }]
+
 export const KINDS: Record<Kind, KindInfo> = {
   source: {
     label: 'Fonte',
@@ -208,9 +212,10 @@ export const KINDS: Record<Kind, KindInfo> = {
   inverter: {
     label: 'Inversor',
     prefix: 'INV',
-    defaults: { sn: 2, p: 1, q: 0, eff: 98, vac: 0.48, on: true },
+    defaults: { sn: 2, p: 1, q: 0, eff: 98, vac: 0.48, on: true, mode: 0 },
     fields: [
       { key: 'on', label: 'Habilitado', type: 'bool' },
+      { key: 'mode', label: 'Modo de operação', type: 'select', options: INVERTER_MODES },
       { key: 'sn', label: 'Potência nominal', unit: 'MVA', type: 'number', min: 0 },
       { key: 'p', label: 'P (+ descarrega / − carrega)', unit: 'MW', type: 'number' },
       { key: 'q', label: 'Q (+ injeta reativo)', unit: 'Mvar', type: 'number' },

@@ -591,3 +591,26 @@ td.files { background: var(--soft); }
 .sl-ctx button { text-align: left; border: 0; background: transparent; padding: 6px 10px; border-radius: 6px; display: flex; justify-content: space-between; gap: 18px; }
 .sl-ctx button:hover:not(:disabled) { background: var(--soft-2); }
 .sl-ctx small { color: var(--muted); }
+
+/* Ações do elemento: fileiras de 3 botões (o 4º desce para a linha de baixo), ícone sobre o texto */
+.sl-actions .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sl-actions .row button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; font-size: 12px; line-height: 1.2; text-align: center; white-space: normal; }
+.sl-actions .row button .ic { font-size: 18px; line-height: 1; }
+
+/* Home: o mesmo logo do header, em tamanho maior */
+.ecl-title.logo img { height: 96px; width: auto; max-width: 90vw; }
+
+/* Ajustes agrupados (classes 1 a 4) */
+.set-group { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 8px; background: var(--panel); }
+.set-group > summary { cursor: pointer; padding: 8px 12px; user-select: none; }
+.set-group > summary:hover { background: var(--soft-2); }
+.set-group .tbl { margin: 0 0 6px; }
+.set-group.parent > .set-group.nested { margin: 4px 10px 8px 22px; }
+
+/* Ícones dos apps (Home e menu Apps) */
+.ecl-app-img { width: 96px; height: 96px; display: block; filter: drop-shadow(0 4px 10px rgba(0, 0, 0, .35)); }
+.ecl-menu-img { width: 22px; height: 22px; vertical-align: middle; margin-right: 6px; }
+
+/* Home: só o ícone e o nome (sem o cartão/contorno ao redor) */
+.ecl-app { background: transparent; border: 0; box-shadow: none; padding: 8px; width: 150px; }
+.ecl-app:hover { background: transparent; border: 0; box-shadow: none; transform: translateY(-4px); }

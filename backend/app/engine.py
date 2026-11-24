@@ -139,7 +139,9 @@ class RelayEngine:
         self.pulses: set[str] = set()
         self._ex: dict[tuple[str, str], Expr] = {}
         self.meas: dict[str, float] = {k: 0.0 for k in (
-            "IA", "IB", "IC", "IMAX", "IN", "IG", "I2", "VA", "VB", "VC", "VAB", "VBC", "VCA", "VG", "V2", "FREQ")}
+            "IA", "IB", "IC", "IMAX", "IN", "IG", "I2", "VA", "VB", "VC", "VAB", "VBC", "VCA", "VG", "V2", "V1", "VS", "FREQ")}
+        self.vs_ang = 0.0                  # ângulo da tensão de sincronismo VS (°)
+        self.sync_rot = 0.0                # giro acumulado de VS em relação a VP por escorregamento (°)
         self.group = 1
         self.pending_group: int | None = None
         self.group_timer = 0.0
@@ -226,6 +228,7 @@ class RelayEngine:
         self.ctr = st.number(self.group_cls, "CTR", 1.0) or 1.0
         self.ctrn = st.number(self.group_cls, "CTRN", self.ctr) or self.ctr
         self.ptr = st.number(self.group_cls, "PTR", 1.0) or 1.0
+        self.ptrs = st.number(self.group_cls, "PTRS", self.ptr) or self.ptr
         self.vnom = st.number(self.group_cls, "VNOM", 115.0) or 115.0
         self.directional.rebuild()
         self.elements, self.n_off = build_elements(self)
@@ -594,6 +597,12 @@ class RelayEngine:
         m["VG"] = abs(V["A"] + V["B"] + V["C"]) / self.ptr
         m["V2"] = abs(V["A"] + A_OP2 * V["B"] + A_OP * V["C"]) / self.ptr
         m["FREQ"] = self.field.cfg.freq
+        m["V1"] = abs(V["A"] + A_OP * V["B"] + A_OP2 * V["C"]) / (3.0 * self.ptr)
+        vs = self.field.vs_phasor()
+        m["VS"] = abs(vs) / self.ptrs
+        self.vs_ang = math.degrees(cmath.phase(vs)) if abs(vs) > 1e-9 else 0.0
+        cfg_s = self.field.cfg
+        self.sync_rot = (self.sync_rot + 360.0 * (cfg_s.vs_freq - cfg_s.freq) * dt) % 360.0
         a = v
         a["IA_MAG"], a["IB_MAG"], a["IC_MAG"] = ia, ib, ic
         a["IG_MAG"] = a["IN_MAG"] = abs(resid)
@@ -602,7 +611,7 @@ class RelayEngine:
             a[f"I{ph}_ANG"] = math.degrees(cmath.phase(c)) if abs(c) > 1e-9 else 0.0
         a["VA_MAG"], a["VB_MAG"], a["VC_MAG"] = (abs(V[p]) for p in "ABC")
         a["VAB_MAG"], a["VBC_MAG"], a["VCA_MAG"] = abs(vab), abs(vbc), abs(vca)
-        a["VS_MAG"] = 0.0
+        a["VS_MAG"] = abs(vs)
         for ph in "ABC":
             a[f"V{ph}_ANG"] = math.degrees(cmath.phase(V[ph])) if abs(V[ph]) > 1e-9 else 0.0
         for nm, c in (("VAB", vab), ("VBC", vbc), ("VCA", vca)):

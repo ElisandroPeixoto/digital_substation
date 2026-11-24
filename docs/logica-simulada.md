@@ -64,7 +64,20 @@ Base: manual do SEL-751, seção "Overcurrent Elements" / "Time-Overcurrent Elem
   `3I2` = |IA + a²·IB + a·IC| ÷ `CTR`. Pickups em A **secundários** (primário ÷ CTR). Disjuntor aberto ou injeção analógica desligada: corrente zero.
 - Tensões (27/59) e frequência (81D): tempo definido, mesmo modelo de partida/atuação.
 - **Não implementados**: 49 (térmico), 46 (desbalanço), HIF, 50INC (falha incipiente de cabo, figuras 4.6/4.7),
-  partida a frio, falha de disjuntor interna (`52ABF`), sincronismo (25), 78, 55, bloqueio por harmônicas, `E27I/E59I`, demanda.
+  partida a frio, falha de disjuntor interna (`52ABF`), 78, 55, bloqueio por harmônicas, demanda.
+
+## Tensão avançada, sincronismo (25) e potência (32)
+
+Implementados em `backend/app/protection_v.py` (e `protection.py` para os níveis 1–4 de 27/59), conforme o manual do SEL-751 (seção 4, Group Settings). Tensões em V secundários; os bits do Relay Word existem mesmo com o elemento desabilitado.
+
+- **27/59 de tempo definido:** `27Pn`, `27PPn`, `27Sn`, `59Pn`, `59PPn`, `59Sn`, `59Gn`, `59Qn` (n = 1–4; `S` = canal VS), bits `27Pn`/`27PnT` etc. **3P27/3P59** (sem atraso): as três tensões abaixo/acima do pickup do nível 1 (Wye: `27P1P`/`59P1P`; Delta: `27PP1P`/`59PP1P`).
+- **27I / 59I (tempo inverso):** habilitados por `E27In = Y` (n = 1–2) e `E59In = Y` (n = 1–4). Grandeza de operação `nOQ` (VAB, VBC, VCA, VA, VB, VC, V1, VS, MINLL, MINLN; no 59I também VG, 3V2, 3V0, MAXLL, MAXLN), pickup, curva (`CURVEA/B/(C)/COEF`, coeficientes A, B, C), dial `TD`, reset `TTR` e controle de torque `nTC` (SELogic). 27I: `TTT = TD·(B + A/(1 − OQ/P)^C)`, só integra abaixo de 0,975·P; 59I: `TTT = TD·(B + A/((OQ/P)^C − 1))`, só integra acima de 1,025·P (equações 4.20 e 4.21). Bits `27In`, `27InT`, `27InRS` (e `59I…`).
+- **25 (sincronismo):** `E25 = Y` e `VSCONN = VS`. VS vem da injeção (módulo primário, ângulo e **frequência** na janela de injeção; `PTRS` converte). VP = `25RCF` · fase escolhida em `SYNCPH` (VA/VB/VC, VAB/VBC/VCA ou ângulo 0–330°, que referencia VA/VAB). Bits `59VP`, `59VS`, `59VDIF` (`25VDIF`, OFF = sempre 1, pickup de 2 ciclos), `SF` (escorregamento < `25SF`, frequência em FNOM ± 5 Hz, `BSYNCH` desligada), `25A1`/`25A2` e `DLDB`/`DLLB`/`LLDB` (`27LP/59LP/27BP/59BP`). Diferença angular `|(∠VP − ∠VS) + (fP − fS)·TCLOSD/1000·360|`; com `TCLOSD = OFF` ou escorregamento ≤ 0,005 Hz vale o ângulo fixo (`25ANGn`); com escorregamento e `TCLOSD`, 25An sobe no pulso de passagem por 0° (ângulo decrescente) ou enquanto o ângulo compensado cresce e é menor que `25ANGn`. Se `vs_freq` ≠ frequência do sistema, VS gira em relação a VP. Não implementada a verificação de última checagem `79CLS` (tratada como 0).
+- **32 (potência):** `EPWR = 3P1/3P2`; `3PWRnP` (VA secundários), `PWRnT` (+WATTS, −WATTS, +VARS, −VARS, convenção de carga), `PWRnD`. P ou Q trifásico com média de 2 ciclos, supervisão |VAB| e |VBC| > 20 V (VBC = VAB com `SINGLEV = Y`). Bits `3PWRnP` e `3PWRnT`.
+- **593SRMS:** `E593SRMS = Y` e `593SRMSP`: RMS de 0,2 s e RMS de 10 min (a cada 3 s) por tensão fase-fase; bits `593SRMS1/2/3` (AB, BC, CA).
+- **Não implementados:** 55 (fator de potência) e os canais CC `27Nn/59Nn` (VBAT).
+
+Testes: `backend/tests/test_voltage_sync_power.py`.
 
 ## Controle direcional (67)
 

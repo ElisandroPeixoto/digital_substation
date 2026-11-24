@@ -259,6 +259,8 @@ O lado CC aceita disjuntores, chaves e TCs entre a bateria e o inversor: eles fi
 
 O **Disjuntor** e a **Chave seccionadora** têm o parâmetro **Circuito CC** (desmarcado = CA). Marcado, o símbolo mostra a marca "CC". O solver identifica o tipo do circuito pela ligação (ilha CC = bateria + inversor) e avisa quando a marcação não combina (marcado como CA em circuito CC, ou como CC em circuito CA).
 
+**Modo do inversor:** *Automático* (padrão, comportamento original: segue a rede com P/Q constantes; em ilha CA sem fonte, o primeiro inversor apto forma a rede), *Seguidor de rede* (nunca forma a rede; sem fonte ou formador na ilha fica sem tensão CA) e *Formador de rede* (fonte de tensão com 5 % de impedância interna). **Vários formadores na mesma ilha operam em paralelo** e dividem a carga conforme as impedâncias do caminho (ex.: duas baterias nos enrolamentos S e T de um transformador de 3 enrolamentos, ambas descarregando); o ângulo de cada formador acompanha a defasagem dos transformadores entre eles, então não há circulação de potência por causa do índice horário. Formador com fonte na ilha opera em paralelo com a rede. Se a tensão do sistema em um terminal do transformador diferir mais de 20 % da nominal do enrolamento, o painel avisa (impedâncias fora de escala).
+
 ## Play, Pause e relógio
 
 A barra superior do SystemLab tem **▶ Play / ⏸ Pause**, **⏹ Parar**, a **velocidade** (0,5× a 10×) e o **relógio** da simulação (mesmo formato das preferências do DigitalRelay: segundos ou hh:mm:ss:mmm).

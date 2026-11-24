@@ -78,6 +78,9 @@ export function InjectionWindow({ sid }: { sid: string }) {
   const ki = sec ? 1 / info.ctr : 1
   const kv = sec ? 1 / info.ptr : 1
   const kn = sec ? 1 / info.ctrn : 1
+  const ptrs = info.ptrs ?? info.ptr
+  const kvs = sec ? 1 / ptrs : 1
+  const vsU = sec ? 'V sec.' : 'V prim.'
   const iu = sec ? 'A sec.' : 'A prim.'
   const vu = sec ? 'V sec.' : 'V prim.'
   const num = (k: string) => sim[k as keyof SimConfig] as number
@@ -167,6 +170,27 @@ export function InjectionWindow({ sid }: { sid: string }) {
           <div className="row wrap inj-freq">
             <NumField label="Frequência" value={sim.freq} unit="Hz" step={0.1} min={0} onCommit={(v) => patch({ freq: v })} />
             <span className="hint">Tensão de linha nominal: {fmt((info.vnom * info.ptr) / 1000, 2)} kV prim. / {fmt(info.vnom, 1)} V sec.</span>
+          </div>
+        </section>
+      </div>
+
+      <div className="inj-grid">
+        <section className="card">
+          <div className="row"><h3>Tensão de sincronismo (VS)</h3></div>
+          <table className="tbl inj-tbl">
+            <thead><tr><th /><th>Módulo ({vsU})</th><th>Ângulo (°)</th><th>{sec ? 'Primário equivalente' : 'Secundário equivalente'}</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><b>VS</b></td>
+                <td><NumInput label="Módulo VS" value={sim.vs_mag * kvs} min={0} step={10} onCommit={(v) => patch({ vs_mag: v / kvs })} /></td>
+                <td><NumInput label="Ângulo VS" value={sim.vs_ang} step={5} digits={2} onCommit={(v) => patch({ vs_ang: normAngle(v) })} /></td>
+                <td className="mono muted">{sec ? `${fmt(sim.vs_mag, 2)} V prim.` : `${fmt(sim.vs_mag / ptrs, 3)} V sec.`}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="row wrap inj-freq">
+            <NumField label="Frequência de VS" value={sim.vs_freq} unit="Hz" step={0.05} min={0} onCommit={(v) => patch({ vs_freq: v })} />
+            <span className="hint">Usada na verificação de sincronismo (25): a diferença entre a frequência de VP e a de VS gera o escorregamento.</span>
           </div>
         </section>
       </div>

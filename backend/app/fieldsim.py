@@ -50,6 +50,10 @@ class SimConfig:
     vc_mag: float = 7967.4
     vc_ang: float = 120.0
     freq: float = 60.0
+    # Entrada de sincronismo VS (verificação de sincronismo, 25): módulo PRIMÁRIO (V), ângulo (°) e frequência (Hz)
+    vs_mag: float = 7967.4
+    vs_ang: float = 0.0
+    vs_freq: float = 60.0
     vdc: float = 125.0
     open_ms: float = 60.0              # tempo mecânico de abertura do disjuntor
     close_ms: float = 100.0            # tempo mecânico de fechamento
@@ -114,6 +118,13 @@ class FieldSim:
             for ph, (ang, sign) in _FAULT_PHASORS[cfg.fault_type].items():
                 I[ph] = cmath.rect(cfg.fault_current * sign, math.radians(ang))
         return I, V
+
+    def vs_phasor(self) -> complex:
+        """Tensão de sincronismo VS (primária); zero com a injeção analógica desligada."""
+        cfg = self.cfg
+        if not cfg.analog_on:
+            return 0j
+        return cmath.rect(cfg.vs_mag, math.radians(cfg.vs_ang))
 
     def set_balanced_load(self, mag: float, angle: float = -18.0) -> None:
         cfg = self.cfg
