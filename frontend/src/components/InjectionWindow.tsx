@@ -40,6 +40,15 @@ export function InjectionWindow({ sid }: { sid: string }) {
       return 'primary'
     }
   })
+  // SEL-787: enrolamentos cujo diagrama fasorial está oculto (preferência do usuário)
+  const [hidden, setHidden] = useState<number[]>(() => {
+    try { return JSON.parse(localStorage.getItem('sel787.inject.hidden') ?? '[]') as number[] } catch { return [] }
+  })
+  const toggleW = (n: number) => setHidden((h) => {
+    const v = h.includes(n) ? h.filter((x) => x !== n) : [...h, n]
+    try { localStorage.setItem('sel787.inject.hidden', JSON.stringify(v)) } catch { /* sem armazenamento */ }
+    return v
+  })
   // Sessão encerrada (ex.: backend reiniciado): para de consultar e avisa.
   const [gone, setGone] = useState(false)
   const { data, error } = usePoll(() => api.panel(sid), 250, !gone, sid)
@@ -157,7 +166,7 @@ export function InjectionWindow({ sid }: { sid: string }) {
           <button className={!sec ? 'active' : ''} onClick={() => setMode('primary')}>Primário</button>
           <button className={sec ? 'active' : ''} onClick={() => setMode('secondary')}>Secundário</button>
         </div>
-        <span className={`bk bk-${data.breaker.state}`}>DJ {data.breaker.closed ? 'FECHADO' : 'ABERTO'}</span>
+        {!is787 && <span className={`bk bk-${data.breaker.state}`}>DJ {data.breaker.closed ? 'FECHADO' : 'ABERTO'}</span>}
         <button onClick={() => window.close()}>Fechar janela</button>
       </header>
       {err && <div className="alert">{err}</div>}
@@ -236,15 +245,43 @@ export function InjectionWindow({ sid }: { sid: string }) {
       </div>
 
       <div className="inj-grid">
-        <section className="card">
-          <PhasorDiagram id="di" title={`Diagrama fasorial – correntes (${iu})`} unit={sec ? 'A' : 'A'}
-            items={PH.map((ph, n) => ({ label: `I${ph}`, mag: iPolar[n].mag, ang: iPolar[n].ang, color: COLORS[ph] }))} />
-        </section>
+        {!is787 && (
+          <section className="card">
+            <PhasorDiagram id="di" title={`Diagrama fasorial – correntes (${iu})`} unit={sec ? 'A' : 'A'}
+              items={PH.map((ph, n) => ({ label: `I${ph}`, mag: iPolar[n].mag, ang: iPolar[n].ang, color: COLORS[ph] }))} />
+          </section>
+        )}
         <section className="card">
           <PhasorDiagram id="dv" title={`Diagrama fasorial – tensões (${vu})`} unit="V"
             items={PH.map((ph, n) => ({ label: `V${ph}`, mag: vPolar[n].mag, ang: vPolar[n].ang, color: COLORS[ph] }))} />
         </section>
       </div>
+
+      {is787 && (
+        <section className="card">
+          <div className="row wrap">
+            <h3>Diagramas fasoriais – correntes dos enrolamentos</h3>
+            <span className="spacer" />
+            {windings.filter((n) => n <= 3).map((n) => (
+              <button key={n} className={hidden.includes(n) ? '' : 'primary'} aria-pressed={!hidden.includes(n)} onClick={() => toggleW(n)}
+                title={hidden.includes(n) ? `Mostrar o fasorial de W${n}` : `Ocultar o fasorial de W${n}`}>
+                {hidden.includes(n) ? 'Mostrar' : 'Ocultar'} W{n}
+              </button>
+            ))}
+          </div>
+          <div className="inj-grid">
+            {windings.filter((n) => n <= 3 && !hidden.includes(n)).map((n) => {
+              const pre = n === 1 ? '' : `w${n}`
+              const k = sec ? 1 / (info.ctrs?.[n - 1] ?? info.ctr) : 1
+              return (
+                <PhasorDiagram key={n} id={`di${n}`} title={`W${n} – correntes (${iu})`} unit="A"
+                  items={PH.map((ph) => ({ label: `I${ph}`, mag: num(`${pre}i${ph.toLowerCase()}_mag`) * k, ang: num(`${pre}i${ph.toLowerCase()}_ang`), color: COLORS[ph] }))} />
+              )
+            })}
+            {windings.filter((n) => n <= 3).every((n) => hidden.includes(n)) && <p className="hint">Todos os fasoriais estão ocultos.</p>}
+          </div>
+        </section>
+      )}
 
       <section className="card">
         <h3>Componentes de sequência (dos valores inseridos)</h3>

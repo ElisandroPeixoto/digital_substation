@@ -38,7 +38,7 @@ export function TestBench({ sid, info, data, texts }: Props) {
     <div className="bench">
       {err && <div className="alert">{err}</div>}
 
-      <section className="card">
+      {info.model !== '787' && <section className="card">
         <h3>Disjuntor (campo)</h3>
         <div className="row">
           <span className={`bk bk-${data.breaker.state}`}>{BK_LABEL[data.breaker.state] ?? data.breaker.state}</span>
@@ -52,7 +52,7 @@ export function TestBench({ sid, info, data, texts }: Props) {
           <NumField label="Tempo de fechamento" value={sim.close_ms} unit="ms" step={10} min={1} onCommit={(v) => patch({ close_ms: v })} />
         </div>
         <p className="hint">Abertura ≥ 100 / 120 / 140 ms aciona os alarmes de tempo de abertura (níveis 1–3).</p>
-      </section>
+      </section>}
 
       <MeasurementCard sid={sid} data={data} info={info} onOpenInjection={openInjection} />
 
