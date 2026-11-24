@@ -233,7 +233,7 @@ export const KINDS: Record<Kind, KindInfo> = {
   fault: {
     label: 'Falta',
     prefix: 'F',
-    defaults: { type: 1, rf: 0, on: true, lid: 0, pos: 50 },
+    defaults: { type: 1, rf: 0, on: true, pos: 50 },
     fields: [
       { key: 'on', label: 'Falta aplicada', type: 'bool' },
       { key: 'type', label: 'Tipo de falta', type: 'select', options: FAULT_TYPES.map((t) => ({ v: t.v, l: t.l })) },
@@ -272,6 +272,7 @@ export function localPorts(el: El): [number, number][] {
     case 'source': return [[40, 0]]
     case 'load': return [[-40, 0]]
     case 'tp': return [[0, -40]]
+    case 'line': return [[-60, 0], [60, 0], [0, -8]]              // 0 e 1 = extremos; 2 = ponto central (derivação para uma falta)
     case 'transformer3': return [[-60, 0], [60, -20], [60, 20]]   // 0 = P (esquerda), 1 = S (direita, acima), 2 = T (direita, abaixo)
     case 'fault': return [[0, 40]]               // ponto de ligação sai da ponta (seta) do raio, de cima para baixo
     case 'ied': return []                          // sem terminais: relés do mesmo projeto IEC61850 se comunicam
@@ -316,7 +317,7 @@ export function hitRect(el: El): [number, number, number, number] {
     case 'breaker': return [-22, -22, 44, 44]
     case 'switch': return [-40, -16, 80, 32]
     case 'transformer': return [-32, -22, 64, 44]
-    case 'line': return [-40, -14, 80, 28]
+    case 'line': return [-62, -16, 124, 32]
     case 'transformer3': return [-62, -48, 124, 96]
     case 'bus': { const h = busCells(el) * 10; return [-h - 6, -9, 2 * h + 12, 18] }
     case 'battery': return [-40, -24, 80, 48]

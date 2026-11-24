@@ -64,13 +64,13 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
         </g>
       )
     case 'line':
-      // trecho de linha: bloco alongado com marcas diagonais
+      // trecho de linha alongado, com marcas diagonais; o ponto central (topo) recebe uma falta
       return (
         <g {...s}>
-          <line x1={-40} y1={0} x2={-26} y2={0} />
-          <line x1={26} y1={0} x2={40} y2={0} />
-          <rect x={-26} y={-8} width={52} height={16} rx={2} />
-          <path d="M -16 6 L -8 -6 M -2 6 L 6 -6 M 12 6 L 20 -6" />
+          <line x1={-60} y1={0} x2={-44} y2={0} />
+          <line x1={44} y1={0} x2={60} y2={0} />
+          <rect x={-44} y={-8} width={88} height={16} rx={2} />
+          <path d="M -32 6 L -24 -6 M -12 6 L -4 -6 M 8 6 L 16 -6 M 28 6 L 36 -6" />
         </g>
       )
     case 'bus':

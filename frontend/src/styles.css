@@ -585,3 +585,9 @@ td.files { background: var(--soft); }
 
 .sl-actions { margin: 12px 0; padding-top: 8px; border-top: 1px solid var(--line); }
 .sl-actions h4 { margin: 0 0 6px; }
+
+/* ----------------------------------------------------------------- SystemLab: menu do botão direito */
+.sl-ctx { position: fixed; z-index: 30; min-width: 170px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); display: grid; }
+.sl-ctx button { text-align: left; border: 0; background: transparent; padding: 6px 10px; border-radius: 6px; display: flex; justify-content: space-between; gap: 18px; }
+.sl-ctx button:hover:not(:disabled) { background: var(--soft-2); }
+.sl-ctx small { color: var(--muted); }

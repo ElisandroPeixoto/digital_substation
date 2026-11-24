@@ -235,7 +235,12 @@ const fI = (p: Ph | undefined, kvb: number | undefined, d = 1) =>
   (p ? (DISP.pu && kvb && kvb > 0 ? `${fmt(p.mag / ((DISP.sbase * 1000) / (Math.sqrt(3) * kvb)), 4)} pu ∠${fmt(p.ang, 1)}°` : `${fmt(p.mag, d)} A ∠${fmt(p.ang, 1)}°`) : '–')
 const fIm = (mag: number, kvb: number | undefined, d = 1) => fI({ mag, ang: 0 }, kvb, d).replace(/ ∠.*$/, '')
 
+/** Linhas de valores do elemento no diagrama (sem os avisos de "desenergizado"). */
 function valueLines(el: El, r: ElResult | undefined): string[] {
+  return valueLinesRaw(el, r).filter((t) => t && t !== 'desenergizado')
+}
+
+function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
   if (!r) return []
   switch (el.kind) {
     case 'ied': return []
@@ -256,7 +261,7 @@ function valueLines(el: El, r: ElResult | undefined): string[] {
     case 'transformer3': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'line': return r.energized ? [`${fmt(r.extra.len, 1)} km · ${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'}`] : [`${fmt(r.extra.len, 1)} km`]
     case 'tp': return [r.energized ? `${fmt(r.extra.vsec, 1)} V` : 'desenergizado']
-    case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${num(el, 'lid') > 0 ? ` @ ${fmt(num(el, 'pos'), 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}${DISP.pu ? '' : ' A'}` : 'sem corrente'}`] : ['desligada']
+    case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${r.extra.pos >= 0 ? ` @ ${fmt(r.extra.pos, 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}${DISP.pu ? '' : ' A'}` : 'sem corrente'}`] : ['desligada']
   }
 }
 
@@ -475,6 +480,86 @@ export function SystemLabApp() {
     setDg((d) => ({ ...d, els: d.els.map((e) => (ids.has(e.id) ? { ...e, rot: (e.rot + 1) % 4 } : e)) }))
   }, [sel])
 
+  // ---- copiar e colar
+  const clipRef = useRef<{ els: El[]; wires: Diagram['wires'] } | null>(null)
+  const pasteN = useRef(0)
+  const mouseSeen = useRef(false)
+  const mouseRef = useRef(mouse)
+  mouseRef.current = mouse
+  const selRef = useRef(sel)
+  selRef.current = sel
+  const panStart = useRef<[number, number] | null>(null)
+  const panMoved = useRef(false)
+  const [ctx, setCtx] = useState<{ x: number; y: number; wx: number; wy: number; elId?: number } | null>(null)
+  const [hasClip, setHasClip] = useState(false)
+
+  /** Copia a seleção (ou o elemento `onlyId`) com as ligações entre eles. */
+  const copySel = useCallback((onlyId?: number): boolean => {
+    const d = dgRef.current
+    const cur = selRef.current
+    const ids = new Set<number>(onlyId != null ? [onlyId] : cur?.type === 'el' ? cur.ids : [])
+    const els = d.els.filter((e) => ids.has(e.id))
+    if (els.length === 0) return false
+    const wires = d.wires.filter((w) => !w.tap && ids.has(w.a[0]) && ids.has(w.b[0]))
+    clipRef.current = { els: JSON.parse(JSON.stringify(els)), wires: JSON.parse(JSON.stringify(wires)) }
+    pasteN.current = 0
+    setHasClip(true)
+    return true
+  }, [])
+
+  /** Cola o conteúdo copiado centrado em (wx, wy); sem ponto, desloca a cada colagem. Os IEDs colados saem sem relé associado. */
+  const pasteClip = useCallback((at?: [number, number]) => {
+    const c = clipRef.current
+    if (!c) return
+    pasteN.current += 1
+    const n = pasteN.current
+    setDg((d) => {
+      const map = new Map<number, number>()
+      let id = d.nextId
+      for (const e of c.els) map.set(e.id, id++)
+      const xs = c.els.map((e) => e.x)
+      const ys = c.els.map((e) => e.y)
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2
+      const dx = at ? snap(at[0] - cx) : GRID * 2 * n
+      const dy = at ? snap(at[1] - cy) : GRID * 2 * n
+      const taken: El[] = [...d.els]
+      const added: El[] = []
+      for (const e of c.els) {
+        const prefix = KINDS[e.kind].prefix
+        let k = taken.filter((x) => x.kind === e.kind).length + 1
+        while (taken.some((x) => x.name === `${prefix}${k}`)) k++
+        const copy: El = { ...e, id: map.get(e.id)!, x: e.x + dx, y: e.y + dy, name: `${prefix}${k}`, p: { ...e.p } }
+        if (e.kind === 'ied') {
+          delete copy.sid; delete copy.rname; delete copy.sc; delete copy.scPos; delete copy.scOpen
+          if (e.links) {
+            const links: NonNullable<El['links']> = {}
+            for (const key of ['breaker', 'tc', 'tp'] as const) { const v = e.links[key]; if (v != null && map.has(v)) links[key] = map.get(v) }
+            copy.links = links
+          }
+        }
+        taken.push(copy)
+        added.push(copy)
+      }
+      const wires = c.wires.map((w) => ({
+        ...w, id: id++, a: [map.get(w.a[0])!, w.a[1]] as PortRef, b: [map.get(w.b[0])!, w.b[1]] as PortRef,
+        ...(w.via ? { via: w.via.map(([x, y]) => [x + dx, y + dy] as Pt) } : {}),
+      }))
+      setSel({ type: 'el', ids: added.map((e) => e.id) })
+      return { ...d, els: [...d.els, ...added], wires: [...d.wires, ...wires], nextId: id }
+    })
+  }, [])
+
+  // menu do botão direito: fecha ao clicar fora ou com Esc
+  useEffect(() => {
+    if (!ctx) return
+    const close = (e: Event) => { if (!(e.target as Element | null)?.closest?.('.sl-ctx')) setCtx(null) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setCtx(null) }
+    window.addEventListener('pointerdown', close, true)
+    window.addEventListener('keydown', esc)
+    return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', esc) }
+  }, [ctx])
+
   // ---- teclado e roda do mouse
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -484,6 +569,11 @@ export function SystemLabApp() {
       else if ((e.key === 'a' || e.key === 'A') && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         setSel({ type: 'el', ids: dgRef.current.els.map((x) => x.id) })
+      } else if ((e.key === 'c' || e.key === 'C') && (e.ctrlKey || e.metaKey)) {
+        if (copySel()) e.preventDefault()
+      } else if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        pasteClip(mouseSeen.current ? mouseRef.current : undefined)
       } else if (e.key === 'r' || e.key === 'R') rotateSel()
       else if (e.key === ' ') { e.preventDefault(); spaceDown.current = true }
       else if (e.key === 'Escape') { setWiring(null); setSel(null) }
@@ -495,7 +585,7 @@ export function SystemLabApp() {
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [removeSel, rotateSel])
+  }, [removeSel, rotateSel, copySel, pasteClip])
 
   useEffect(() => {
     const svg = svgRef.current
@@ -523,6 +613,8 @@ export function SystemLabApp() {
     capture(e)
     setWiring(null)
     if (e.button === 1 || e.button === 2 || spaceDown.current) {
+      panStart.current = [e.clientX, e.clientY]
+      panMoved.current = false
       drag.current = { mode: 'pan', sx: e.clientX, sy: e.clientY, tx: view.tx, ty: view.ty }
       return
     }
@@ -601,6 +693,9 @@ export function SystemLabApp() {
   }
   const onMove = (e: React.PointerEvent) => {
     const [wx, wy] = toWorld(e.clientX, e.clientY)
+    mouseSeen.current = true
+    const ps0 = panStart.current
+    if (drag.current?.mode === 'pan' && ps0 && Math.hypot(e.clientX - ps0[0], e.clientY - ps0[1]) > 5) panMoved.current = true
     setMouse([wx, wy])
     const d = drag.current
     if (!d) return
@@ -784,6 +879,15 @@ export function SystemLabApp() {
   const selEl = sel?.type === 'el' && sel.ids.length === 1 ? elById.get(sel.ids[0]) : undefined
   const multi = sel?.type === 'el' && sel.ids.length > 1
   const selRes = selEl ? sol.res.get(selEl.id) : undefined
+  /** Linha à qual a Falta selecionada está ligada (pelo ponto central da linha), seguindo as ligações. */
+  const faultLine = useMemo(() => {
+    if (selEl?.kind !== 'fault') return null
+    const parent = new Map<string, string>()
+    const find = (x: string): string => { let p = parent.get(x) ?? x; while ((parent.get(p) ?? p) !== p) p = parent.get(p) ?? p; parent.set(x, p); return p }
+    for (const w of dg.wires) parent.set(find(`${w.a[0]}:${w.a[1]}`), find(`${w.b[0]}:${w.b[1]}`))
+    const mine = find(`${selEl.id}:0`)
+    return dg.els.find((x) => x.kind === 'line' && find(`${x.id}:2`) === mine) ?? null
+  }, [dg, selEl])
   const fitView = () => setView({ tx: 40, ty: 40, k: 1 })
   const clearAll = () => {
     if (dg.els.length === 0 || window.confirm('Apagar todo o diagrama?')) { setDg(emptyDiagram()); setSel(null); setWiring(null) }
@@ -907,7 +1011,15 @@ export function SystemLabApp() {
           onPointerDown={onBgDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
-          onContextMenu={(e) => e.preventDefault()}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            if (panMoved.current) { panMoved.current = false; return }                  // arrastou com o botão direito: foi um deslocamento da vista
+            const [wx, wy] = toWorld(e.clientX, e.clientY)
+            const idAttr = (e.target as Element).closest('[data-elid]')?.getAttribute('data-elid')
+            const elId = idAttr != null ? Number(idAttr) : undefined
+            if (elId != null && !(sel?.type === 'el' && sel.ids.includes(elId))) setSel({ type: 'el', ids: [elId] })
+            setCtx({ x: e.clientX, y: e.clientY, wx, wy, elId })
+          }}
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
           onDrop={onDrop}
         >
@@ -964,7 +1076,7 @@ export function SystemLabApp() {
               const hidden = !!el.hide
               const lines = showVals && !dragging && !hidden ? (isComm(el.kind) ? commLines(el) : valueLines(el, r)) : []
               return (
-                <g key={el.id} onMouseEnter={() => setHover(el.id)} onMouseLeave={() => setHover((h) => (h === el.id ? null : h))}>
+                <g key={el.id} data-elid={el.id} onMouseEnter={() => setHover(el.id)} onMouseLeave={() => setHover((h) => (h === el.id ? null : h))}>
                   <g
                     transform={`translate(${el.x} ${el.y}) rotate(${el.rot * 90})`}
                     onPointerDown={(e) => onElDown(e, el)}
@@ -1009,6 +1121,12 @@ export function SystemLabApp() {
             {wiringPos && <path d={route(wiringPos, [snap(mouse[0]), snap(mouse[1])])} fill="none" stroke="var(--accent-2)" strokeWidth={2} strokeDasharray="5 4" pointerEvents="none" />}
           </g>
         </svg>
+        {ctx && (
+          <div className="sl-ctx" style={{ left: ctx.x, top: ctx.y }} role="menu">
+            {ctx.elId != null && <button role="menuitem" onClick={() => { copySel(ctx.elId); setCtx(null) }}>⧉ Copiar <small>Ctrl+C</small></button>}
+            <button role="menuitem" disabled={!hasClip} onClick={() => { pasteClip([ctx.wx, ctx.wy]); setCtx(null) }}>📋 Colar{ctx.elId == null ? ' aqui' : ''} <small>Ctrl+V</small></button>
+          </div>
+        )}
         {showCfg && (
           <div className="sl-modal" onPointerDown={(e) => { if (e.target === e.currentTarget) setShowCfg(false) }}>
             <div className="sl-modal-card" role="dialog" aria-label="Configurações">
@@ -1070,22 +1188,16 @@ export function SystemLabApp() {
                 )}
               </label>
             ))}
-            {selEl.kind === 'fault' && (
+            {selEl.kind === 'fault' && faultLine && (
               <>
                 <label className="sl-field">
-                  <span>Aplicar em uma linha</span>
-                  <select className="numinput" value={dg.els.some((x) => x.kind === 'line' && x.id === num(selEl, 'lid')) ? num(selEl, 'lid') : 0}
-                    onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, lid: Number(e.target.value) } }))}>
-                    <option value={0}>— ponto ligado ao terminal —</option>
-                    {dg.els.filter((x) => x.kind === 'line').map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-                  </select>
+                  <span>Linha conectada</span>
+                  <b>{faultLine.name}</b>
                 </label>
-                {dg.els.some((x) => x.kind === 'line' && x.id === num(selEl, 'lid')) && (
-                  <label className="sl-field">
-                    <span>Posição na linha (0–100 %, do terminal 1)</span>
-                    <NumInput key={`${selEl.id}-pos`} value={num(selEl, 'pos')} onChange={(n) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, pos: Math.min(100, Math.max(0, n)) } }))} />
-                  </label>
-                )}
+                <label className="sl-field">
+                  <span>Posição na linha (0–100 %, a partir do terminal 1)</span>
+                  <NumInput key={`${selEl.id}-pos`} value={num(selEl, 'pos')} onChange={(n) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, pos: Math.min(100, Math.max(0, n)) } }))} />
+                </label>
               </>
             )}
             {selEl.kind === 'ied' && (
@@ -1325,7 +1437,7 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
                 <tbody>
                   {rows('bus').map((e) => {
                     const r = sol.res.get(e.id)
-                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? fV(r.v[0], r.kvb?.[0]) : 'desenergizado'}</td></tr>
+                    return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? fV(r.v[0], r.kvb?.[0]) : '–'}</td></tr>
                   })}
                 </tbody>
               </table>

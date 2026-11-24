@@ -159,7 +159,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
   const idx = new Map<string, number>()
   const elById = new Map<number, El>()
   let count = 0
-  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'battery' || e.kind === 'fault' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : e.kind === 'transformer3' ? 3 : 2)
+  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'battery' || e.kind === 'fault' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : e.kind === 'transformer3' || e.kind === 'line' ? 3 : 2)
   for (const e of els) {
     elById.set(e.id, e)
     for (let k = 0; k < nPorts(e); k++) idx.set(`${e.id}:${k}`, count++)
@@ -195,7 +195,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
       forming: false, canForm: false, vac: Math.max(num(e, 'vac') || 0.48, 1e-6), ys: cx(), E: cx(1, 0), iInj: cx(),
     }
     const bs = bats.filter((b) => uc.find(node(b, 0)) === uc.find(nDc))
-    if (!energize) { inv.note = 'simulação parada'; return inv }
+    if (!energize) { inv.note = ''; return inv }
     if (!flag(e, 'on')) { inv.note = 'desligado'; return inv }
     if (bs.length === 0) { inv.note = 'sem bateria no lado CC'; return inv }
     let p = num(e, 'p')
@@ -413,6 +413,12 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
     const ports = nPorts(e)
     for (let k = 0; k < ports; k++) nodeEnergized.set(`${e.id}:${k}`, abs(vOf(node(e, k))) > 1e-6)
   }
+  for (const e of els) {                       // ponto central da linha: energizado quando a linha está
+    if (e.kind !== 'line') continue
+    if (!(nodeEnergized.get(`${e.id}:0`) || nodeEnergized.get(`${e.id}:1`))) continue
+    const mn = node(e, 2)
+    for (const x of els) for (let k = 0; k < nPorts(x); k++) if (node(x, k) === mn) nodeEnergized.set(`${x.id}:${k}`, true)
+  }
   const totals = { gen: 0, genQ: 0, load: 0, loadQ: 0, loss: 0 }
   // ilhas CC energizadas (bateria + inversor ativo); tudo que está nelas (fios, disjuntores) fica energizado
   const dcActive = new Set(invs.filter((v) => v.active).map((v) => uc.find(v.nDc)))
@@ -619,7 +625,7 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
   const fe = faults[0]
   if (faults.length > 1) warns.push(`Mais de uma falta aplicada: só a primeira (${fe.name}) é calculada.`)
   // falta em uma linha: o ponto fica a `pos`% do terminal 1; a linha é dividida em dois trechos por um nó interno
-  const fl = els.find((e) => e.kind === 'line' && e.id === Math.round(num(fe, 'lid')))
+  const fl = els.find((e) => e.kind === 'line' && node(e, 2) === node(fe, 0))        // falta ligada ao ponto central de uma linha
   const posFrac = Math.min(0.9999, Math.max(0.0001, num(fe, 'pos') / 100))
   let nx = ctx.nodes.length ? Math.max(...ctx.nodes) + 1 : 0
   const mid = fl ? nx++ : -1
@@ -936,7 +942,7 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
       r.extra = { ...r.extra, vsec: (r.v[0].mag / vp) * num(e, 'vs') }
     }
     if (e.kind === 'fault') {
-      r.extra = { ...r.extra, ifault: e.id === fe.id ? maxI(ts[0].i).mag : 0 }
+      r.extra = { ...r.extra, ifault: e.id === fe.id ? maxI(ts[0].i).mag : 0, pos: e.id === fe.id && fl ? Math.min(100, Math.max(0, num(fe, 'pos'))) : -1 }
       r.energized = true
       if (e.id === fe.id) r.note = label
     }
