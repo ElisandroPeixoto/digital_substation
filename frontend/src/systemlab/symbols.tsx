@@ -51,6 +51,18 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false 
           <circle cx={11} cy={0} r={18} />
         </g>
       )
+    case 'transformer3':
+      // três círculos entrelaçados: P à esquerda, S à direita (acima) e T à direita (abaixo)
+      return (
+        <g {...s}>
+          <line x1={-60} y1={0} x2={-44} y2={0} />
+          <line x1={44} y1={-20} x2={60} y2={-20} />
+          <line x1={44} y1={20} x2={60} y2={20} />
+          <circle cx={-18} cy={0} r={26} />
+          <circle cx={18} cy={-20} r={26} />
+          <circle cx={18} cy={20} r={26} />
+        </g>
+      )
     case 'line':
       // trecho de linha: bloco alongado com marcas diagonais
       return (

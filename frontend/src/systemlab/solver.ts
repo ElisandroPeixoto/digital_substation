@@ -14,7 +14,7 @@
  * - Falta (opcional, `withFault`): estudo por componentes simétricas (redes de seq. positiva, negativa e zero) com a falta no terminal do
  *   elemento Falta; ver `faultStudy` no fim do arquivo.
  */
-import { FAULT_TYPES, busCells, flag, isComm, num, vgroup, type El, type Wire } from './model'
+import { FAULT_TYPES, busCells, flag, isComm, num, t3group, vgroup, type El, type Wire } from './model'
 
 export const DEFAULT_SBASE = 100 // MVA
 /** Potência de base (MVA) da última chamada de `solve` (módulo síncrono: ajustada no início de cada cálculo). */
@@ -116,6 +116,35 @@ class UF {
   union(a: number, b: number) { this.p[this.find(a)] = this.find(b) }
 }
 
+/** Pares de terminais do transformador de 3 enrolamentos: P–S, P–T, S–T. */
+const T3_PAIRS: [number, number][] = [[0, 1], [0, 2], [1, 2]]
+interface T3Info { z: [Cx, Cx, Cx]; y: [Cx, Cx, Cx]; ph: [number, number, number]; w: [number, number, number] }
+
+/** Equivalente do transformador de 3 enrolamentos. `zscale` converte (% ÷ 100) da base do primário para o pu do sistema. */
+function t3Info(e: El, zscale: number): T3Info {
+  const xr = Math.max(num(e, 'xr'), 0)
+  const z = (k: string) => zUnit(Math.max((num(e, k) / 100) * zscale, 1e-6), xr)
+  const zps = z('zps')
+  const zpt = z('zpt')
+  const zst = z('zst')
+  const half = (a: Cx, b: Cx, c: Cx): Cx => { const t = sub(add(a, b), c); const h = cx(t.re / 2, t.im / 2); return abs(h) < 1e-5 ? cx(1e-5, 0) : h }
+  const zp = half(zps, zpt, zst)
+  const zs = half(zps, zst, zpt)
+  const zt = half(zpt, zst, zps)
+  const yp = div(cx(1), zp)
+  const ys = div(cx(1), zs)
+  const yt = div(cx(1), zt)
+  const sum = add(add(yp, ys), yt)
+  const g = t3group(e)
+  const al = [0, g.clk[1] * 30, g.clk[2] * 30]
+  return {
+    z: [zp, zs, zt],
+    y: [div(mul(yp, ys), sum), div(mul(yp, yt), sum), div(mul(ys, yt), sum)],
+    ph: [al[1] - al[0], al[2] - al[0], al[2] - al[1]],
+    w: g.w,
+  }
+}
+
 /** `ph`: defasagem (°) do transformador (a corrente em a é y·(Va − e^{jph}·Vb)). */
 interface Branch { a: number; b: number; y: Cx; ph?: number }
 
@@ -130,7 +159,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
   const idx = new Map<string, number>()
   const elById = new Map<number, El>()
   let count = 0
-  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'battery' || e.kind === 'fault' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : 2)
+  const nPorts = (e: El) => (e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'battery' || e.kind === 'fault' ? 1 : e.kind === 'bus' ? busCells(e) + 1 : e.kind === 'transformer3' ? 3 : 2)
   for (const e of els) {
     elById.set(e.id, e)
     for (let k = 0; k < nPorts(e); k++) idx.set(`${e.id}:${k}`, count++)
@@ -148,6 +177,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
   const uc = new UF(count)
   for (const e of els) {
     if ((e.kind === 'breaker' || e.kind === 'switch') ? flag(e, 'closed') : (e.kind === 'tc' || e.kind === 'transformer' || e.kind === 'line')) uc.union(node(e, 0), node(e, 1))
+    if (e.kind === 'transformer3') { uc.union(node(e, 0), node(e, 1)); uc.union(node(e, 0), node(e, 2)) }
   }
 
   // ---- BESS: inversores alimentados pelas baterias da mesma ilha CC (nós ligados por disjuntores/chaves fechados).
@@ -213,6 +243,11 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
       const v1 = Math.max(num(e, 'v1'), 1e-6)
       link(node(e, 0), node(e, 1), Math.max(num(e, 'v2'), 1e-6) / v1)
     }
+    if (e.kind === 'transformer3') {
+      const v1 = Math.max(num(e, 'v1'), 1e-6)
+      link(node(e, 0), node(e, 1), Math.max(num(e, 'v2'), 1e-6) / v1)
+      link(node(e, 0), node(e, 2), Math.max(num(e, 'v3'), 1e-6) / v1)
+    }
   }
   const queue: number[] = []
   for (const e of els) {
@@ -239,6 +274,8 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
   const trafoY = new Map<number, Cx>()
   /** Linha: impedâncias série (pu) de sequência positiva/negativa (z1) e zero (z0). */
   const lineZ = new Map<number, { z1: Cx; z0: Cx }>()
+  /** Transformador de 3 enrolamentos: impedâncias do equivalente em estrela (z: P, S, T), admitâncias do equivalente em delta (y: P–S, P–T, S–T), defasagens (°) e tipos de enrolamento. */
+  const t3Z = new Map<number, T3Info>()
   const loadY = new Map<number, Cx>()
 
   for (const e of els) {
@@ -253,6 +290,13 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
       const y = div(cx(1), zUnit(zAbs, Math.max(num(e, 'xr'), 0)))
       trafoY.set(e.id, y)
       branches.push({ a, b: node(e, 1), y, ph: trafoShift(e) })
+    } else if (e.kind === 'transformer3') {
+      const a = node(e, 0)
+      const ba = bk(a) || Math.max(num(e, 'v1'), 1e-6)
+      const info = t3Info(e, (SBASE / Math.max(num(e, 'sn'), 1e-6)) * Math.pow(Math.max(num(e, 'v1'), 1e-6) / ba, 2))
+      t3Z.set(e.id, info)
+      const ns = [a, node(e, 1), node(e, 2)]
+      T3_PAIRS.forEach(([i, j], k) => branches.push({ a: ns[i], b: ns[j], y: info.y[k], ph: info.ph[k] }))
     } else if (e.kind === 'line') {
       const a = node(e, 0)
       const zb = (bk(a) * bk(a)) / SBASE
@@ -444,6 +488,27 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
       r.v = [kv(n0)]
       const vp = Math.max(num(e, 'vp'), 1e-9)
       r.extra = { vsec: (r.v[0].mag / vp) * num(e, 'vs'), ratio: (vp * 1000) / Math.max(num(e, 'vs'), 1e-9) }
+    } else if (e.kind === 'transformer3') {
+      const t = t3Z.get(e.id)
+      const ns = [n0, node(e, 1), node(e, 2)]
+      const iin = [cx(), cx(), cx()]
+      if (t && ns.some((n) => abs(vOf(n)) > 1e-9)) {
+        T3_PAIRS.forEach(([i, j], k) => {
+          const sh = polar(1, t.ph[k])
+          const ii = mul(sub(vOf(ns[i]), mul(sh, vOf(ns[j]))), t.y[k])
+          iin[i] = add(iin[i], ii)
+          iin[j] = sub(iin[j], mul(ii, conj(sh)))
+        })
+      }
+      r.energized = ns.some((n) => abs(vOf(n)) > 1e-6)
+      r.v = ns.map((n) => kv(n))
+      r.i = ns.map((n, k) => amps(n, iin[k]))
+      const pq = ns.map((n, k) => sFlow(n, iin[k]))
+      r.p = pq.map((x) => x[0])
+      r.q = pq.map((x) => x[1])
+      const loss = r.p.reduce((a, b) => a + b, 0)
+      r.extra = { loading: (Math.hypot(r.p[0], r.q[0]) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss }
+      totals.loss += loss
     } else {
       // dois terminais em série: breaker, switch, tc, transformer
       const n1 = node(e, 1)
@@ -490,7 +555,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
   }
   const out: Solution = { res, nodeEnergized, totals }
   if (withFault && energize) {
-    const fr = faultStudy({ els, node, nodes: [...allNodes], bk, sources, loadY, trafoY, lineZ, invs, iBase }, res)
+    const fr = faultStudy({ els, node, nodes: [...allNodes], bk, sources, loadY, trafoY, lineZ, t3Z, invs, iBase }, res)
     if (fr) {
       out.res = new Map([...res, ...fr.over])
       // totais do sistema em falta
@@ -521,6 +586,7 @@ interface FaultCtx {
   loadY: Map<number, Cx>
   trafoY: Map<number, Cx>
   lineZ: Map<number, { z1: Cx; z0: Cx }>
+  t3Z: Map<number, T3Info>
   invs: { e: El; nAc: number; active: boolean; forming: boolean; ys: Cx; E: Cx; p: number; q: number }[]
   iBase: (n: number) => number
 }
@@ -546,7 +612,7 @@ const rot3 = (k: number): Cx => { const m = ((k % 3) + 3) % 3; return m === 0 ? 
 interface SeqI { i1: Cx; i2: Cx; i0: Cx }
 
 function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultInfo; terms: Map<number, FaultTerm[]>; warns: string[]; over: Map<number, ElResult> } | null {
-  const { els, node, bk: bk0, sources, loadY, trafoY, lineZ, invs, iBase: iBase0 } = ctx
+  const { els, node, bk: bk0, sources, loadY, trafoY, lineZ, t3Z, invs, iBase: iBase0 } = ctx
   const faults = els.filter((e) => e.kind === 'fault' && flag(e, 'on'))
   if (faults.length === 0) return null
   const warns: string[] = []
@@ -555,8 +621,11 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
   // falta em uma linha: o ponto fica a `pos`% do terminal 1; a linha é dividida em dois trechos por um nó interno
   const fl = els.find((e) => e.kind === 'line' && e.id === Math.round(num(fe, 'lid')))
   const posFrac = Math.min(0.9999, Math.max(0.0001, num(fe, 'pos') / 100))
-  const mid = ctx.nodes.length ? Math.max(...ctx.nodes) + 1 : 0
-  const nodes = fl ? [...ctx.nodes, mid] : ctx.nodes
+  let nx = ctx.nodes.length ? Math.max(...ctx.nodes) + 1 : 0
+  const mid = fl ? nx++ : -1
+  const cn = new Map<number, number>()                                   // nó comum (seq. zero) de cada transformador de 3 enrolamentos
+  for (const e of els) if (e.kind === 'transformer3') cn.set(e.id, nx++)
+  const nodes = [...ctx.nodes, ...(fl ? [mid] : []), ...cn.values()]
   const f = fl ? mid : node(fe, 0)
   const bk = (n: number) => (n === mid && fl ? bk0(node(fl, 0)) : bk0(n))
   const iBase = (n: number) => (n === mid && fl ? iBase0(node(fl, 0)) : iBase0(n))
@@ -600,6 +669,19 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
           else if (ga && db) shunt(a, y)
           else if (gb && da) shunt(b, y)
         } else stamp(a, b, y, seq === 1 ? trafoShift(e) : -trafoShift(e))
+      } else if (e.kind === 'transformer3') {
+        const t = t3Z.get(e.id)
+        if (t) {
+          const ns = [node(e, 0), node(e, 1), node(e, 2)]
+          if (seq === 0) {
+            const c = cn.get(e.id)!
+            t.w.forEach((w, k) => {
+              const y0 = div(cx(1), t.z[k])
+              if (w === 2) stamp(ns[k], c, y0)        // Y aterrado: caminho da seq. zero até o ponto comum
+              else if (w === 1) shunt(c, y0)           // Δ: o ponto comum é aterrado pela malha do delta
+            })
+          } else T3_PAIRS.forEach(([i, j], k) => stamp(ns[i], ns[j], t.y[k], seq === 1 ? t.ph[k] : -t.ph[k]))
+        }
       } else if (e.kind === 'load' && seq !== 0) {
         shunt(node(e, 0), loadY.get(e.id)!)
       } else if (e.kind === 'line') {
@@ -731,7 +813,7 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
   for (const e of els) {
     const b0 = base.get(e.id)
     if (!b0 || e.kind === 'battery' || e.kind === 'ied') continue
-    const ports = e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'fault' || e.kind === 'bus' ? 1 : 2
+    const ports = e.kind === 'source' || e.kind === 'load' || e.kind === 'tp' || e.kind === 'fault' || e.kind === 'bus' ? 1 : e.kind === 'transformer3' ? 3 : 2
     const nodesOf = e.id === fe.id && fl ? [mid] : Array.from({ length: ports }, (_, k) => node(e, k))
     const V = nodesOf.map((n) => vs(n))
     let I: SeqI[] = V.map(() => zero)
@@ -772,6 +854,25 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
     } else if (e.kind === 'load') {
       const y = loadY.get(e.id)!
       I = [{ i1: mul(V[0].v1, y), i2: mul(V[0].v2, y), i0: cx() }]
+    } else if (e.kind === 'transformer3') {
+      const t = t3Z.get(e.id)
+      if (t) {
+        const acc: SeqI[] = [{ ...zero }, { ...zero }, { ...zero }]
+        T3_PAIRS.forEach(([i, j], k) => {
+          for (const q of [1, 2] as const) {
+            const sh = polar(1, q === 1 ? t.ph[k] : -t.ph[k])
+            const vi = q === 1 ? V[i].v1 : V[i].v2
+            const vj = q === 1 ? V[j].v1 : V[j].v2
+            const ii = mul(sub(vi, mul(sh, vj)), t.y[k])
+            const key = q === 1 ? 'i1' : 'i2'
+            acc[i][key] = add(acc[i][key], ii)
+            acc[j][key] = sub(acc[j][key], mul(ii, conj(sh)))
+          }
+        })
+        const vc = vs(cn.get(e.id)!).v0
+        t.w.forEach((w, k) => { if (w === 2) acc[k].i0 = mul(sub(V[k].v0, vc), div(cx(1), t.z[k])) })
+        I = acc
+      }
     } else if (e.kind === 'line') {
       const lz = lineZ.get(e.id)
       if (lz) {
@@ -825,6 +926,7 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
       if (e.kind === 'transformer') r.extra = { ...r.extra, loading: (Math.hypot(pq[0][0], pq[0][1]) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss: pq[0][0] + pq[1][0] }
     }
     if (e.kind === 'line') r.extra = { ...r.extra, loss: r.p[0] + r.p[1] }
+    if (e.kind === 'transformer3') r.extra = { ...r.extra, loading: (Math.hypot(r.p[0], r.q[0]) / Math.max(num(e, 'sn'), 1e-9)) * 100, loss: r.p.reduce((a, b) => a + b, 0) }
     if (e.kind === 'tc') {
       const ratio = Math.max(num(e, 'ip'), 1e-9) / Math.max(num(e, 'is'), 1e-9)
       r.extra = { ...r.extra, isec: r.i[0].mag / ratio, ratio }

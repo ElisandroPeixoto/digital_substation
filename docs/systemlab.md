@@ -218,6 +218,11 @@ Com um relé associado ao IED, a seção **Atalhos na tela (mapa DNP3)** das pro
 
 Os valores são lidos do mapa a cada 0,7 s. Rótulos são editáveis (padrão = descrição do ponto) e a ordem pode ser alterada (▲▼). Se o mapa DNP3 do relé for trocado e o índice passar a apontar para outro bit, o atalho fica inativo (`–`). Os atalhos ficam salvos no diagrama (`systemlab.diagram`).
 
+## Transformador de 3 enrolamentos
+
+Elemento com **três terminais**: 1 = **P** (primário), à esquerda; 2 = **S** (secundário), à direita acima; e 3 = **T** (terciário), à direita abaixo (símbolo de três círculos). Parâmetros: potência e tensão nominais de cada enrolamento, impedâncias **P–S, P–T e S–T (%)** na base da potência de P, X/R e o **esquema de ligação** (YNyn0d1, YNyn0d11, YNyn0yn0, YNyn0y0, YNd1d1, YNd11d11, Dyn1yn1, Dyn11yn11, Dd0d0, Dy11y11).
+
+Modelo: as impedâncias dos três enrolamentos vêm do equivalente em estrela (Zp = (Zps + Zpt − Zst)/2, e analogamente Zs e Zt; Zs ou Zt podem sair ≈ 0 ou negativos, como no transformador real) convertido para delta entre os terminais, com a defasagem de cada par dada pelos índices horários do esquema (S e T em relação a P). Vale no regime normal e na falta. Sequência zero: enrolamento **Y aterrado** liga o terminal ao ponto comum pela impedância do enrolamento; **Δ** aterra o ponto comum (fecha a malha); **Y isolado** não conduz. O resultado mostra tensão, corrente e potência dos três terminais, o carregamento de P e as perdas.
 ## Linha
 
 Elemento de dois terminais com **comprimento (km)** e **impedância por km**: **R** e **Xl** de sequência positiva/negativa (Ω/km) e **R0/Xl0** de sequência zero (usados nas faltas à terra). A impedância total é comprimento × impedância por km (convertida para pu na tensão de base do trecho); não há capacitância shunt. Nas propriedades aparecem a impedância total, as perdas e as grandezas de cada terminal.

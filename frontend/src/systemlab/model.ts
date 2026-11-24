@@ -1,6 +1,6 @@
 /** Modelo do diagrama unifilar do SystemLab (elementos, conexões, geometria dos terminais). */
 
-export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc' | 'ied' | 'fault' | 'line' | 'battery' | 'inverter'
+export type Kind = 'source' | 'breaker' | 'switch' | 'transformer' | 'bus' | 'load' | 'tp' | 'tc' | 'ied' | 'fault' | 'line' | 'transformer3' | 'battery' | 'inverter'
 export type Params = Record<string, number | boolean>
 
 export type ShortcutKind = 'cmd' | 'bit' | 'meas'
@@ -86,6 +86,16 @@ const VG: [string, VGroup['hv'], VGroup['lv'], number][] = [
 const wTxt = (w: string) => (w.toUpperCase() === 'D' ? 'Δ' : w.toUpperCase().startsWith('YN') ? 'Y aterrado' : 'Y isolado')
 export const VGROUPS: VGroup[] = VG.map(([l, hv, lv, clock], v) => ({ v, l, hv, lv, clock }))
 export const VGROUP_OPTIONS = VGROUPS.map((g) => ({ v: g.v, l: `${g.l} – ${wTxt(g.hv)} / ${wTxt(g.lv)}, ${g.clock * 30}°` }))
+/** Esquema de ligação do transformador de 3 enrolamentos: tipos (0 = Y isolado, 1 = Δ, 2 = Y aterrado) de P, S e T e índices horários de S e T em relação a P. */
+export interface T3Group { v: number; l: string; w: [number, number, number]; clk: [number, number, number] }
+const T3G: [string, number, number, number, number, number][] = [
+  ['YNyn0d1', 2, 2, 1, 0, 1], ['YNyn0d11', 2, 2, 1, 0, 11], ['YNyn0yn0', 2, 2, 2, 0, 0], ['YNyn0y0', 2, 2, 0, 0, 0],
+  ['YNd1d1', 2, 1, 1, 1, 1], ['YNd11d11', 2, 1, 1, 11, 11], ['Dyn1yn1', 1, 2, 2, 1, 1], ['Dyn11yn11', 1, 2, 2, 11, 11], ['Dd0d0', 1, 1, 1, 0, 0], ['Dy11y11', 1, 0, 0, 11, 11],
+]
+const wName = (w: number) => (w === 1 ? 'Δ' : w === 2 ? 'Y aterrado' : 'Y')
+export const T3GROUPS: T3Group[] = T3G.map(([l, a, b, c, s2, t2], v) => ({ v, l, w: [a, b, c], clk: [0, s2, t2] }))
+export const T3GROUP_OPTIONS = T3GROUPS.map((g) => ({ v: g.v, l: `${g.l} – ${g.w.map(wName).join(' / ')}` }))
+export const t3group = (el: El): T3Group => T3GROUPS.find((g) => g.v === Math.round(num(el, 'tgrp'))) ?? T3GROUPS[0]
 export const vgroup = (el: El): VGroup => VGROUPS.find((g) => g.v === Math.round(num(el, 'grp'))) ?? VGROUPS[0]
 
 export interface KindInfo {
@@ -138,6 +148,24 @@ export const KINDS: Record<Kind, KindInfo> = {
       { key: 'z', label: 'Impedância', unit: '%', type: 'number', min: 0 },
       { key: 'xr', label: 'Relação X/R', type: 'number', min: 0 },
       { key: 'grp', label: 'Esquema de ligação (terminal 1 = maiúsculas)', type: 'select', options: VGROUP_OPTIONS },
+    ],
+  },
+  transformer3: {
+    label: 'Transformador de 3 enrolamentos',
+    prefix: 'T3',
+    defaults: { sn: 30, ss: 30, st: 10, v1: 138, v2: 69, v3: 13.8, zps: 10, zpt: 17, zst: 6, xr: 10, tgrp: 0 },
+    fields: [
+      { key: 'sn', label: 'Potência – primário (P)', unit: 'MVA', type: 'number', min: 0 },
+      { key: 'ss', label: 'Potência – secundário (S)', unit: 'MVA', type: 'number', min: 0 },
+      { key: 'st', label: 'Potência – terciário (T)', unit: 'MVA', type: 'number', min: 0 },
+      { key: 'v1', label: 'Tensão nominal – P', unit: 'kV', type: 'number', min: 0 },
+      { key: 'v2', label: 'Tensão nominal – S', unit: 'kV', type: 'number', min: 0 },
+      { key: 'v3', label: 'Tensão nominal – T', unit: 'kV', type: 'number', min: 0 },
+      { key: 'zps', label: 'Impedância P–S (base = potência de P)', unit: '%', type: 'number', min: 0 },
+      { key: 'zpt', label: 'Impedância P–T (base = potência de P)', unit: '%', type: 'number', min: 0 },
+      { key: 'zst', label: 'Impedância S–T (base = potência de P)', unit: '%', type: 'number', min: 0 },
+      { key: 'xr', label: 'Relação X/R', type: 'number', min: 0 },
+      { key: 'tgrp', label: 'Esquema de ligação (P, S, T)', type: 'select', options: T3GROUP_OPTIONS },
     ],
   },
   bus: {
@@ -229,7 +257,7 @@ export const KINDS: Record<Kind, KindInfo> = {
   },
 }
 
-export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'line', 'load', 'battery', 'inverter', 'tp', 'tc', 'fault', 'ied']
+export const KIND_ORDER: Kind[] = ['source', 'bus', 'breaker', 'switch', 'transformer', 'transformer3', 'line', 'load', 'battery', 'inverter', 'tp', 'tc', 'fault', 'ied']
 
 /** Parâmetro numérico; ausente (diagrama salvo antes do parâmetro existir) = valor padrão do tipo. */
 export function num(el: El, key: string): number {
@@ -244,6 +272,7 @@ export function localPorts(el: El): [number, number][] {
     case 'source': return [[40, 0]]
     case 'load': return [[-40, 0]]
     case 'tp': return [[0, -40]]
+    case 'transformer3': return [[-60, 0], [60, -20], [60, 20]]   // 0 = P (esquerda), 1 = S (direita, acima), 2 = T (direita, abaixo)
     case 'fault': return [[0, 40]]               // ponto de ligação sai da ponta (seta) do raio, de cima para baixo
     case 'ied': return []                          // sem terminais: relés do mesmo projeto IEC61850 se comunicam
     case 'battery': return [[40, 0]]              // terminal CC
@@ -288,6 +317,7 @@ export function hitRect(el: El): [number, number, number, number] {
     case 'switch': return [-40, -16, 80, 32]
     case 'transformer': return [-32, -22, 64, 44]
     case 'line': return [-40, -14, 80, 28]
+    case 'transformer3': return [-62, -48, 124, 96]
     case 'bus': { const h = busCells(el) * 10; return [-h - 6, -9, 2 * h + 12, 18] }
     case 'battery': return [-40, -24, 80, 48]
     case 'inverter': return [-40, -24, 80, 48]

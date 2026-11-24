@@ -253,6 +253,7 @@ function valueLines(el: El, r: ElResult | undefined): string[] {
     case 'tc': if (r.extra.dc) return [`${fmt(r.extra.idc, 1)} A CC`]
       return [r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'} → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
     case 'transformer': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
+    case 'transformer3': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'line': return r.energized ? [`${fmt(r.extra.len, 1)} km · ${fIm(r.i[0].mag, r.kvb?.[0])}${DISP.pu ? '' : ' A'}`] : [`${fmt(r.extra.len, 1)} km`]
     case 'tp': return [r.energized ? `${fmt(r.extra.vsec, 1)} V` : 'desenergizado']
     case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${num(el, 'lid') > 0 ? ` @ ${fmt(num(el, 'pos'), 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}${DISP.pu ? '' : ' A'}` : 'sem corrente'}`] : ['desligada']
@@ -865,7 +866,7 @@ export function SystemLabApp() {
             onDoubleClick={() => addAtCenter(k)}
             title="Arraste para o diagrama (ou dê duplo clique)"
           >
-            <svg viewBox="-48 -48 96 96" width={44} height={44} aria-hidden>
+            <svg viewBox={k === 'transformer3' ? "-66 -66 132 132" : "-48 -48 96 96"} width={44} height={44} aria-hidden>
               <g transform={k === 'tp' ? 'translate(0 8)' : undefined}>
                 <SymbolShape kind={k} color="var(--ink)" cells={4} />
               </g>
@@ -959,7 +960,7 @@ export function SystemLabApp() {
               const vertBus = isBar(el.kind) && el.rot % 2 === 1
               const lab: [number, number] = isBar(el.kind)
                 ? (vertBus ? [el.x + 16, el.y - busCells(el) * 10 - 6] : [el.x, el.y + 26])
-                : el.kind === 'fault' ? [el.x + 84, el.y - 12] : [el.x, el.y + (el.kind === 'ied' ? 46 : 40)]
+                : el.kind === 'fault' ? [el.x + 84, el.y - 12] : [el.x, el.y + (el.kind === 'ied' ? 46 : el.kind === 'transformer3' ? 66 : 40)]
               const hidden = !!el.hide
               const lines = showVals && !dragging && !hidden ? (isComm(el.kind) ? commLines(el) : valueLines(el, r)) : []
               return (
@@ -1293,6 +1294,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
         </tbody>
       </table>
       {el.kind === 'tp' && <p className="hint">Tensão secundária: <b>{fmt(r.extra.vsec, 2)} V</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
+      {el.kind === 'transformer3' && <p className="hint">Terminais: 1 = P (primário), 2 = S (secundário), 3 = T (terciário). Carregamento de P: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fP(r.extra.loss, 3)}</b></p>}
       {el.kind === 'line' && <p className="hint">Impedância total (seq. +): <b>{fmt(r.extra.rt, 3)} + j{fmt(r.extra.xt, 3)} Ω</b> · comprimento {fmt(r.extra.len, 1)} km · perdas {fP(r.extra.loss, 3)}</p>}
       {el.kind === 'tc' && <p className="hint">Corrente secundária: <b>{fmt(r.extra.isec, 3)} A</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
       {el.kind === 'transformer' && <p className="hint">Carregamento: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fP(r.extra.loss, 3)}</b></p>}
