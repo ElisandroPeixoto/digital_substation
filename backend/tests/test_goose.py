@@ -272,3 +272,49 @@ def test_sel_vb_token_with_dollar_suffix():
     scl = SCL.decode().replace('(VB001)Bool', '(VB001$r0)Bool').replace('<sel:GooseRxEntry tdlString="Bool"/>', '<sel:GooseRxEntry tdlString="(r0$o0x1807)BVstring13"/>')
     sub = next(i for i in parse_scl(scl.encode(), "d.scd") if i.name == "SUB").subs[0]
     assert [e.vb for e in sub.entries] == ["VB001", "r0$o0x1807"]
+
+
+# Pos.stVal (Dbpos) de disjuntor: o assinante recebe dois pontos, Lo (52A = 0) e Hi (52A = 1)
+SCL_DBPOS = (SCL.decode()
+             .replace('<FCDA ldInst="CFG" prefix="LT" lnClass="GGIO" lnInst="1" doName="Ind02" daName="stVal" fc="ST"/>',
+                      '<FCDA ldInst="PRO" prefix="BK1" lnClass="XCBR" lnInst="1" doName="Pos" daName="stVal" fc="ST"/>')
+             .replace('<sel:GooseRxEntry tdlString="Bool"/>', '<sel:GooseRxEntry tdlString="(VB012$r1)BVstring2"/>')).encode()
+
+
+def test_dbpos_breaker_position_lo_hi():
+    ied = next(i for i in parse_scl(SCL_DBPOS, "d.scd") if i.name == "SUB")
+    e = ied.subs[0].entries[1]
+    assert (e.vb, e.vb_hi) == ("VB012", "VB013")
+    p = SclProject()
+    p.add(parse_scl(SCL_DBPOS, "d.scd"), "d.scd")
+    pub = next(i for i in p.to_dict()["ieds"] if i["name"] == "PUB")
+    assert pub["gcbs"][0]["entries"][1]["bit"] == "52A"
+    assert pub["gcbs"][0]["subscribers"][0]["vbs"] == ["VB001", "VB012", "VB013"]
+    rig = Rig()
+    rig.net.project = SclProject()
+    rig.net.project.add(parse_scl(SCL_DBPOS, "d.scd"), "d.scd")
+    rig.net.bind("p", "PUB")
+    rig.net.bind("s", "SUB")
+    rig.pub.vals["52A"] = 0.0                  # disjuntor aberto
+    rig.run(0.2)
+    assert rig.sub.ext_bits["VB012"] is True and rig.sub.ext_bits["VB013"] is False
+    rig.pub.vals["52A"] = 1.0                  # fechado
+    rig.run(0.2)
+    assert rig.sub.ext_bits["VB012"] is False and rig.sub.ext_bits["VB013"] is True
+    rig.net.cut.add("PUB")                     # sem comunicação: 00 (nenhum dos dois pontos)
+    rig.run(2.0)
+    assert rig.sub.ext_bits["VB012"] is False and rig.sub.ext_bits["VB013"] is False
+
+
+def test_dbpos_extref_two_points_merge():
+    scl = SCL_DBPOS.decode().replace(
+        '<Private type="SEL_GooseSubscription">', '<Private type="X">').replace(
+        '<LDevice inst="CFG"><LN0 lnClass="LLN0" inst=""/></LDevice>',
+        '<LDevice inst="CFG"><LN0 lnClass="LLN0" inst=""><Inputs>'
+        '<ExtRef desc="Aberto" iedName="PUB" ldInst="PRO" prefix="BK1" lnClass="XCBR" lnInst="1" doName="Pos" daName="stVal" intAddr="VB020" serviceType="GOOSE" srcLDInst="CFG" srcCBName="GCB1"/>'
+        '<ExtRef desc="Fechado" iedName="PUB" ldInst="PRO" prefix="BK1" lnClass="XCBR" lnInst="1" doName="Pos" daName="stVal" intAddr="VB021" serviceType="GOOSE" srcLDInst="CFG" srcCBName="GCB1"/>'
+        '</Inputs></LN0></LDevice>').encode()
+    p = SclProject()
+    p.add(parse_scl(scl, "e.scd"), "e.scd")
+    e = p.ieds["SUB"].subs[0].entries[0]
+    assert (e.vb, e.vb_hi, e.index) == ("VB020", "VB021", 2)     # posição 2 no dataset do publicador

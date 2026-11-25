@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import { usePoll } from '../hooks'
+import { GooseGraph } from './GooseGraph'
 import { GooseParams } from './GooseParams'
 import { LinkTable } from './LinkTable'
 import type { IecGcb, IecIed, IecProject, IecStatus, SessionBrief } from '../types'
 
-type Tab = 'ieds' | 'gcb' | 'links' | 'params' | 'sim'
+type Tab = 'ieds' | 'gcb' | 'links' | 'graph' | 'params' | 'sim'
 const TABS: [Tab, string][] = [
   ['ieds', 'IEDs'],
   ['gcb', 'Blocos de controle GOOSE'],
   ['links', 'Publicadores e assinantes'],
+  ['graph', 'Interface gráfica'],
   ['params', 'Parâmetros de teste'],
   ['sim', 'Simulação'],
 ]
@@ -139,7 +141,7 @@ export function IEC61850App() {
   const [project, setProject] = useState<IecProject>({ files: [], ieds: [] })
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const { data: status } = usePoll(() => api.iecStatus(), 500, tab === 'sim' || tab === 'params', 'iec-status')
+  const { data: status } = usePoll(() => api.iecStatus(), 500, tab === 'sim' || tab === 'params' || tab === 'graph', 'iec-status')
   const { data: sessions } = usePoll(() => api.sessions(), 1500, tab === 'sim', 'iec-sessions')
 
   const reload = useCallback(() => { api.iecProject().then(setProject).catch(() => undefined) }, [])
@@ -181,6 +183,7 @@ export function IEC61850App() {
             {tab === 'ieds' && <Overview project={project} onRemove={(n) => api.iecRemove(n).then(reload)} />}
             {tab === 'gcb' && project.ieds.flatMap((i) => i.gcbs.map((g) => <GcbCard key={`${i.name}/${g.name}`} ied={i} g={g} />))}
             {tab === 'links' && <LinkTable project={project} />}
+            {tab === 'graph' && <GooseGraph project={project} status={status ?? null} />}
             {tab === 'params' && <GooseParams project={project} setProject={setProject} vlanAware={status?.vlan_aware ?? true} onVlan={(v) => api.iecNetwork({ vlan_aware: v }).then(reload)} />}
             {tab === 'sim' && <Simulation project={project} status={status} sessions={sessions ?? []} reload={reload} />}
           </>

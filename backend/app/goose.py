@@ -201,9 +201,16 @@ class GooseNetwork:
                     rx.valid, rx.reason = False, f"sem mensagem há mais de {tal * 1000:.0f} ms (TAL)"
                 if rx.valid:
                     rx.reason = "ok"
-                for i, e in enumerate(sub.entries):
+                for e in sub.entries:
+                    i = e.index - 1                            # posição do dado no dataset do publicador
                     if e.vb and _VB.fullmatch(e.vb) and not (e.fcda and e.fcda.is_quality):
-                        ext[e.vb] = bool(rx.values[i]) if rx.valid and i < len(rx.values) else False
+                        v = bool(rx.values[i]) if rx.valid and 0 <= i < len(rx.values) else None
+                        if e.vb_hi:                            # Dbpos (Pos.stVal): Lo = 52A em 0, Hi = 52A em 1; sem mensagem = 00 (intermediário)
+                            ext[e.vb] = v is False
+                            if _VB.fullmatch(e.vb_hi):
+                                ext[e.vb_hi] = v is True
+                        else:
+                            ext[e.vb] = bool(v)
                 if sub.status_vb and _VB.fullmatch(sub.status_vb):
                     ext[sub.status_vb] = (not rx.valid) if self.status_on_loss else rx.valid
             eng.ext_bits = ext

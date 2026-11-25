@@ -56,8 +56,12 @@ function buildRows(project: IecProject): Row[] {
         const m2 = [...g.modified, ...s.modified.map((x) => `assinatura:${x}`)].join(', ')
         g.entries.forEach((_, k) => {
           const e = s.entries.find((x) => x.index === k + 1)
-          rows.push({ ...base, sub: i.name, idx: String(k + 1), fcda: fc(k), pubBit: f(k).bit, desc: f(k).desc, vb: e?.vb ?? '', statusVb: s.status_vb,
-            source: s.source === 'SEL_GooseSubscription' ? 'SEL (privado)' : s.source, check, modified: m2 })
+          const row = { ...base, sub: i.name, idx: String(k + 1), fcda: fc(k), pubBit: f(k).bit, desc: f(k).desc, vb: e?.vb ?? '', statusVb: s.status_vb,
+            source: s.source === 'SEL_GooseSubscription' ? 'SEL (privado)' : s.source, check, modified: m2 }
+          if (e?.vb_hi) {                                   // Dbpos (Pos.stVal): um ponto por linha – Lo (52A = 0) e Hi (52A = 1)
+            rows.push({ ...row, fcda: `${row.fcda} - Lo`, desc: `${row.desc} – Lo: 52A em 0 (aberto)` })
+            rows.push({ ...row, fcda: `${row.fcda} - Hi`, desc: `${row.desc} – Hi: 52A em 1 (fechado)`, vb: e.vb_hi })
+          } else rows.push(row)
         })
       }
     }

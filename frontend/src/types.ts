@@ -330,7 +330,7 @@ export interface IecGcb {
   enabled: boolean; modified: string[]
   entries: IecFcda[]; subscribers: { ied: string; status_vb: string; vbs: string[] }[]
 }
-export interface IecSubEntry { index: number; vb: string; fcda: IecFcda | null }
+export interface IecSubEntry { index: number; vb: string; vb_hi?: string; fcda: IecFcda | null }   // vb_hi: Dbpos (Pos.stVal) → vb = Lo (52A = 0), vb_hi = Hi (52A = 1)
 export interface IecSub {
   pub_ied: string; cb_name: string; ld_inst: string; dataset: string; go_id: string; conf_rev: number
   mac: string; appid: string; vlan_id: string; vlan_prio: string; status_vb: string; source: string

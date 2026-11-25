@@ -645,3 +645,24 @@ td.files { background: var(--soft); }
 .ecl-app { width: 120px; gap: 6px; }
 .ecl-app b { font-size: 12.8px; }
 .ecl-apps { gap: 18px; }
+
+/* IEC61850: interface gráfica (publicadores → assinantes) */
+.goose-graph .gg-svg { width: 100%; height: min(72vh, 760px); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; touch-action: none; user-select: none; }
+.gg-ok { stroke: var(--ok); stroke-width: 2.4; }
+.gg-off { stroke: var(--muted); stroke-width: 2; stroke-dasharray: 7 6; opacity: .8; }
+.gg-head-ok { fill: var(--ok); }
+.gg-head-off { fill: var(--muted); }
+.gg-cb { fill: var(--muted); font-size: 11px; paint-order: stroke; stroke: var(--bg); stroke-width: 3px; }
+.gg-node { cursor: grab; }
+.gg-node:active { cursor: grabbing; }
+.gg-box { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+.gg-box.on { stroke: var(--ok); }
+.gg-box.warn { stroke: var(--err); }
+.gg-name { fill: var(--ink); font-weight: 700; font-size: 14px; }
+.gg-sub { fill: var(--muted); font-size: 11px; }
+.gg-legend { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+
+/* IEC61850 – interface gráfica: cursor de Pan */
+.gg-svg.pan-mode, .gg-svg.pan-mode * { cursor: grab !important; }
+.gg-svg.pan-mode:active, .gg-svg.pan-mode:active * { cursor: grabbing !important; }
+

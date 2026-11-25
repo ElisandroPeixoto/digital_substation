@@ -134,6 +134,7 @@ export function GooseParams({ project, setProject, vlanAware, onVlan }: { projec
                             <label key={e.index} title={e.fcda?.desc ?? ''}>
                               <small className="muted">{e.fcda?.bit || `#${e.index}`}→</small>
                               <Field value={e.vb} changed={m('vbs')} width={64} onSave={(v) => run(() => api.iecEditSub(ied.name, s.pub_ied, s.cb_name, {}, { [e.index]: v }))} />
+                              {e.vb_hi && <small className="muted" title="Dbpos (Pos.stVal): Lo = 52A em 0 (aberto), Hi = 52A em 1 (fechado)">Lo · {e.vb_hi} Hi</small>}
                             </label>
                           ))}
                         </div>

@@ -74,9 +74,19 @@ class Fcda:
     def ref(self) -> str:
         return f"{self.ld_inst}/{self.prefix}{self.ln_class}{self.ln_inst}.{self.do_name}.{self.da_name}"
 
+    @property
+    def is_dbpos(self) -> bool:
+        """Posição de disjuntor/seccionadora (Pos.stVal, tipo Dbpos, 2 bits): o assinante recebe dois pontos, Lo (52A = 0) e Hi (52A = 1)."""
+        return self.do_name == "Pos" and self.da_name == "stVal" and self.ln_class in ("XCBR", "XSWI", "CSWI")
+
 
 def fcda_bit(f: Fcda) -> tuple[str, str]:
-    """(bit do relé, descrição) a partir do prefixo do GGIO e do índice IndNN."""
+    """(bit do relé, descrição) a partir do prefixo do GGIO e do índice IndNN; BKnXCBR1.Pos.stVal = estado do disjuntor (52A / 52An)."""
+    if f.is_dbpos and f.ln_class == "XCBR":
+        bm = re.fullmatch(r"BK(\d+)", f.prefix or "")
+        n = int(bm.group(1)) if bm else 1
+        bit = "52A" if n == 1 else f"52A{n}"
+        return bit, f"{bit} – Estado do disjuntor (Dbpos: Lo = aberto, Hi = fechado)"
     m = re.search(r"(\d+)$", f.do_name)
     if f.is_quality or not m or f.prefix not in _PREFIX:
         return "", ""
@@ -109,6 +119,7 @@ class SubEntry:
     index: int
     vb: str = ""             # bit virtual (ou endereço interno) que recebe o valor; vazio = entrada não mapeada
     fcda: Fcda | None = None  # dado publicado correspondente (resolvido a partir do publicador)
+    vb_hi: str = ""          # Dbpos (Pos.stVal): ponto Hi (52A = 1); ``vb`` é o ponto Lo (52A = 0)
 
 
 @dataclass
@@ -228,7 +239,10 @@ def _parse_ied(el: ET.Element, ap: dict, gse: dict, filename: str) -> Ied:
                     continue
                 tok = m.group(1) if m else ""
                 vm = re.match(r"(VB\d{3})(?:\$.*)?$", tok)     # "VB001$r0": o sufixo $... é interno da SEL
-                sub.entries.append(SubEntry(index=len(sub.entries) + 1, vb=vm.group(1) if vm else tok))
+                se = SubEntry(index=len(sub.entries) + 1, vb=vm.group(1) if vm else tok)
+                if vm and re.search(r"\)\s*BVstring2\s*$", e.get("tdlString", "")):   # Dbpos: 2 bits a partir do VB (Lo, Hi)
+                    se.vb_hi = _next_vb(se.vb)
+                sub.entries.append(se)
             ied.subs.append(sub)
     if not ied.subs:
         _subs_from_extref(el, ied)
@@ -251,8 +265,17 @@ def _subs_from_extref(el: ET.Element, ied: Ied) -> None:
         elif ex.get("doName"):
             f = Fcda(ex.get("ldInst", ""), ex.get("prefix", ""), ex.get("lnClass", ""), ex.get("lnInst", ""), ex.get("doName", ""), ex.get("daName", ""), "ST")
             f.bit, f.desc = fcda_bit(f)
+            prev = sub.entries[-1] if sub.entries else None
+            if f.is_dbpos and prev and prev.fcda and prev.fcda.ref() == f.ref() and not prev.vb_hi:
+                prev.vb_hi = addr                          # 2º ExtRef do mesmo Pos.stVal: ponto Hi (o 1º é o Lo)
+                continue
             sub.entries.append(SubEntry(index=len(sub.entries) + 1, vb=addr, fcda=f))
     ied.subs.extend(by.values())
+
+
+def _next_vb(vb: str) -> str:
+    m = re.fullmatch(r"VB(\d{3})", vb)
+    return f"VB{int(m.group(1)) + 1:03d}" if m else ""
 
 
 def parse_scl(data: bytes, filename: str = "arquivo.scd") -> list[Ied]:
@@ -398,6 +421,8 @@ class SclProject:
         for e in sub.entries:
             if e.index in mapping:
                 e.vb = mapping[e.index]
+                if e.vb_hi:                                    # Dbpos: o ponto Hi acompanha o Lo (VB seguinte)
+                    e.vb_hi = _next_vb(e.vb) if e.vb else ""
 
     def reset(self, ied: str | None = None) -> None:
         """Restaura os parâmetros GOOSE para os valores do arquivo (de um IED ou de todos)."""
@@ -430,8 +455,15 @@ class SclProject:
                 pub = self.ieds.get(sub.pub_ied)
                 gcb = pub.gcb(sub.cb_name) if pub else None
                 for e in sub.entries:
+                    if gcb and e.fcda is not None and sub.source == "ExtRef":
+                        # ExtRef: a posição no dataset vem do dado referenciado (não da ordem dos ExtRef)
+                        k = next((j for j, f in enumerate(gcb.entries) if f.ref() == e.fcda.ref()), -1)
+                        if k >= 0:
+                            e.index, e.fcda = k + 1, gcb.entries[k]
                     if gcb and e.fcda is None and 0 < e.index <= len(gcb.entries):
                         e.fcda = gcb.entries[e.index - 1]
+                    if e.fcda is not None and e.fcda.is_dbpos and e.vb and not e.vb_hi and sub.source != "ExtRef":
+                        e.vb_hi = _next_vb(e.vb)            # Dbpos sem o tipo no tdlString: Hi = VB seguinte
 
     # --------------------------------------------------------------- visões
     def subscribers_of(self, ied: str, cb: str) -> list[tuple[str, Subscription]]:
@@ -445,7 +477,7 @@ class SclProject:
             for g, gc in zip(d["gcbs"], ied.gcbs):
                 g["modified"] = gm.get(gc.name, [])
                 g["subscribers"] = [{"ied": n, "status_vb": s.status_vb,
-                                     "vbs": [e.vb for e in s.entries if e.vb and not (e.fcda and e.fcda.is_quality)]} for n, s in self.subscribers_of(ied.name, gc.name)]
+                                     "vbs": [v for e in s.entries if e.vb and not (e.fcda and e.fcda.is_quality) for v in (e.vb, e.vb_hi) if v]} for n, s in self.subscribers_of(ied.name, gc.name)]
             for s_d, s in zip(d["subs"], ied.subs):
                 pub = self.ieds.get(s.pub_ied)
                 gcb = pub.gcb(s.cb_name) if pub else None
