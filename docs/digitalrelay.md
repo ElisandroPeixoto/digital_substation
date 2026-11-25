@@ -301,3 +301,8 @@ IED IEC 61850 associado, velocidade) e `front_panel` (textos personalizados `sel
 **Importar:** botão **⬆ Importar JSON** na tela de carga (`POST /api/sessions/import`). Cria um novo relé a partir de `original_files`, reaplica os ajustes de
 `modified` com os valores de `settings`, restaura a injeção, o disjuntor, as entradas, os forçados, os bits mantidos, a velocidade e, se o IED existir no
 projeto IEC 61850 atual, a associação. Os textos do frontal (`front_panel`) voltam para o localStorage do relé. O que não puder ser restaurado vem em `warnings`.
+
+## Ajustes alterados e injeção vinda do SystemLab
+
+- Aba Ajustes: clicar na etiqueta **alterado** volta o ajuste ao valor original do .rdb (`DELETE /api/sessions/<sid>/settings/<classe>/<ajuste>`; a dica mostra o valor original).
+- Relé associado a um IED do SystemLab: o SystemLab envia as grandezas por `POST /api/sessions/<sid>/systemlab` e elas **prevalecem** sobre a injeção manual (a janela de injeção fica travada e `/sim` recusa grandezas analógicas com 409). No cartão Medição do Painel frontal, **Isolar do SystemLab** (`SimConfig.sl_isolated`) devolve a injeção manual que o usuário tinha e passa a ignorar o SystemLab; desligando, volta a valer o SystemLab. O relé é considerado associado enquanto o SystemLab o atualiza (até 15 s sem atualização; o SystemLab só envia com a sua tela aberta).

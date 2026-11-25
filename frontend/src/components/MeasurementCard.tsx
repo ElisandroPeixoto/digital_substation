@@ -19,12 +19,15 @@ export function MeasurementCard({ sid, data, info, onOpenInjection }: { sid: str
   const m = data.meter
   const { ctr, ctrn, ptr } = info
   const fault = data.sim.fault_type
+  const sl = data.systemlab
+  const slLock = !!(sl?.linked && !data.sim.sl_isolated)
   return (
     <section className="card">
       <div className="row">
         <h3>Medição (valores injetados)</h3>
         <span className="spacer" />
         <button
+          disabled={slLock}
           className={`analog-switch ${data.sim.analog_on ? 'on' : 'off'}`}
           onClick={() => api.sim(sid, { analog_on: !data.sim.analog_on })}
           title="Liga ou desliga a injeção de corrente e tensão enquanto a simulação roda"
@@ -34,6 +37,17 @@ export function MeasurementCard({ sid, data, info, onOpenInjection }: { sid: str
         </button>
         <button className="primary" onClick={onOpenInjection}>Abrir janela de injeção ↗</button>
       </div>
+      {(sl?.linked || data.sim.sl_isolated) && (
+        <div className="row wrap">
+          <Toggle
+            checked={!!data.sim.sl_isolated}
+            onChange={(v) => api.sim(sid, { sl_isolated: v })}
+            label="Isolar do SystemLab (injetar direto no DigitalRelay)"
+            hint="Desligado: as correntes e tensões vêm do SystemLab (IED associado). Ligado: o relé usa a injeção manual da janela de injeção."
+          />
+          <span className={`hint ${slLock ? '' : 'warn'}`}>{slLock ? 'Injeção comandada pelo SystemLab.' : sl?.linked ? 'Isolado: o SystemLab não altera a injeção deste relé.' : 'Isolado (SystemLab sem atualização recente).'}</span>
+        </div>
+      )}
       <div className="row wrap">
         <Toggle
           checked={data.sim.analog_off_on_output}

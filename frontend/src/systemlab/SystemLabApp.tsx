@@ -538,7 +538,7 @@ export function SystemLabApp() {
         const key = JSON.stringify(patch, (_, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v))
         if (key !== st.sent || now - st.t > 5000) {
           st.sent = key; st.t = now
-          api.sim(s.id, patch).catch(() => undefined)
+          api.systemlab(s.id, patch).catch(() => undefined)        // prevalece sobre a injeção manual do DigitalRelay (salvo se isolado)
         }
       }
     }

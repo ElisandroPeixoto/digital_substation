@@ -125,7 +125,12 @@ function SettingRow({ sid, cls, item, onSaved }: { sid: string; cls: string; ite
         />
         {err && <div className="err-text">{err}</div>}
       </td>
-      <td>{item.modified && <span className="tag">alterado</span>}</td>
+      <td>{item.modified && (
+        <button className="tag tag-btn" title={`Clique para voltar ao valor original: ${item.original ?? ''}`}
+          onClick={async () => {
+            try { await api.revertSetting(sid, cls, item.key); setErr(null); onSaved() } catch (e) { setErr(e instanceof Error ? e.message : String(e)) }
+          }}>alterado</button>
+      )}</td>
     </tr>
   )
 }

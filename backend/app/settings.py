@@ -117,6 +117,22 @@ class RelaySettings:
         self.sections[cls][key] = value
         self.modified.add((cls, key))
 
+    def original(self, cls: str, key: str) -> str | None:
+        """Valor do ajuste como veio do arquivo (antes das edições no simulador)."""
+        raw = self.raw.get(cls)
+        if raw is None:
+            return None
+        return parse_set_text(raw)[2].get(key)
+
+    def revert(self, cls: str, key: str) -> str:
+        """Volta o ajuste ao valor original do arquivo e o retira da lista de alterados."""
+        orig = self.original(cls, key)
+        if orig is None or cls not in self.sections or key not in self.sections[cls]:
+            raise KeyError(f"{cls}/{key}")
+        self.sections[cls][key] = orig
+        self.modified.discard((cls, key))
+        return orig
+
     def number(self, cls: str, key: str, default: float | None = None) -> float | None:
         """Lê um ajuste numérico. 'OFF'/'NA'/inválido retornam ``default``."""
         raw = self.get(cls, key, "").strip()

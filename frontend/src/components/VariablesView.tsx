@@ -373,7 +373,7 @@ function ForceAny({ sid, forced }: { sid: string; forced: Record<string, number>
 
 
 /** SEL-787: detalhe do diferencial (87) por fase e do REF1. */
-function DiffSection({ elements }: { elements: StateElement[] }) {
+export function DiffSection({ elements }: { elements: StateElement[] }) {
   const d = elements.find((e) => e.diff)
   const r = elements.find((e) => e.ref)
   if (!d?.diff && !r?.ref) return null

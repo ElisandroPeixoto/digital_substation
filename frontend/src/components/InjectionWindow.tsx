@@ -5,6 +5,7 @@ import { normAngle, sequence } from '../phasor'
 import type { Polar } from '../phasor'
 import type { SessionInfo, SimConfig } from '../types'
 import { PhasorDiagram } from './PhasorDiagram'
+import { DiffSection } from './VariablesView'
 import { NumField, NumInput } from './ui'
 
 type Mode = 'primary' | 'secondary'
@@ -52,6 +53,8 @@ export function InjectionWindow({ sid }: { sid: string }) {
   // Sessão encerrada (ex.: backend reiniciado): para de consultar e avisa.
   const [gone, setGone] = useState(false)
   const { data, error } = usePoll(() => api.panel(sid), 250, !gone, sid)
+  // SEL-787: medições diferenciais (IOP, IRT, harmônicas, INR, 87R/87HR/87BL/87U) e REF, as mesmas de Variáveis internas
+  const { data: st } = usePoll(() => api.state(sid), 500, !gone && info?.model === '787', `${sid}-diff`)
   useEffect(() => {
     if (error && /Sessão não encontrada/.test(error)) setGone(true)
   }, [error])
@@ -96,6 +99,7 @@ export function InjectionWindow({ sid }: { sid: string }) {
   const vu = sec ? 'V sec.' : 'V prim.'
   const num = (k: string) => (sim as unknown as Record<string, number>)[k]
   const is787 = info.model === '787'
+  const slLock = !!(data.systemlab?.linked && !sim.sl_isolated)       // injeção comandada pelo SystemLab
   const windings = info.windings ?? [1, 2]
   const patch = (p: Record<string, number | boolean | string | null>) =>
     api.sim(sid, p as Partial<SimConfig>).then(() => setErr(null)).catch((e) => setErr(e instanceof Error ? e.message : String(e)))
@@ -170,9 +174,14 @@ export function InjectionWindow({ sid }: { sid: string }) {
         <button onClick={() => window.close()}>Fechar janela</button>
       </header>
       {err && <div className="alert">{err}</div>}
+      {slLock && (
+        <div className="notice">Este relé está associado a um IED no <b>SystemLab</b>: as correntes e tensões vêm da simulação do SystemLab e não podem ser
+          editadas aqui. Para injetar direto no DigitalRelay, ligue <b>"Isolar do SystemLab"</b> no Painel frontal (cartão Medição).</div>
+      )}
       {!sim.analog_on && <div className="alert">A injeção analógica está DESLIGADA na tela inicial: o relé enxerga tensão e corrente zero.</div>}
       {!data.breaker.closed && <div className="notice">Com o disjuntor aberto o relé enxerga corrente zero; as tensões continuam aplicadas.</div>}
 
+      <fieldset className="inj-lock" disabled={slLock}>
       <div className="inj-grid">
         <section className="card">
           <div className="row"><h3>{is787 ? `Correntes – enrolamento 1 (W1, TC ${info.ctr}:1)` : 'Correntes'}</h3><span className="spacer" /><button onClick={() => balance('i')}>Equilibrar a partir de A</button></div>
@@ -243,6 +252,7 @@ export function InjectionWindow({ sid }: { sid: string }) {
           </div>
         </section>
       </div>
+      </fieldset>
 
       <div className="inj-grid">
         {!is787 && (
@@ -300,6 +310,8 @@ export function InjectionWindow({ sid }: { sid: string }) {
           valem três vezes os módulos acima.
         </p>
       </section>
+
+      {is787 && st && <DiffSection elements={st.protection.elements} />}
 
       <div className="inj-grid">
         <section className="card">

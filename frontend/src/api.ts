@@ -92,6 +92,8 @@ export const api = {
 
   settings: (sid: string, cls: string) => req<SettingsData>('GET', `/sessions/${sid}/settings/${cls}`),
   settingsRaw: (sid: string, cls: string) => req<string>('GET', `/sessions/${sid}/settings/${cls}/raw`),
+  revertSetting: (sid: string, cls: string, key: string) => req<{ value: string }>('DELETE', `/sessions/${sid}/settings/${encodeURIComponent(cls)}/${encodeURIComponent(key)}`),
+  systemlab: (sid: string, patch: Record<string, number | boolean>) => req<{ isolated: boolean }>('POST', `/sessions/${sid}/systemlab`, { patch }),
   patchSetting: (sid: string, cls: string, key: string, value: string) =>
     req<unknown>('PATCH', `/sessions/${sid}/settings`, { cls, key, value }),
 

@@ -30,9 +30,9 @@ export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, 
         <div className="controls">
           {data && info.model !== '2440' && (
             <>
-              <span className={`chip-state bk-${data.breaker.state}`}>DJ {data.breaker.closed ? 'FECHADO' : 'ABERTO'}</span>
+              {info.model !== '787' && <span className={`chip-state bk-${data.breaker.state}`}>DJ {data.breaker.closed ? 'FECHADO' : 'ABERTO'}</span>}
               <span className="chip-state">Grupo {data.status.group}</span>
-              <span className="chip-state">79: {data.status.recloser}</span>
+              {info.model !== '787' && <span className="chip-state">79: {data.status.recloser}</span>}
               {data.status.trip === 1 && <span className="chip-state trip">TRIP</span>}
             </>
           )}

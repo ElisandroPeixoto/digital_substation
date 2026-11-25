@@ -687,3 +687,9 @@ td.files { background: var(--soft); }
 .gg-issues .err { color: var(--err); }
 .gg-issues .warn { color: var(--warn, #F6AD55); }
 .gg-cbsec + .gg-cbsec { border-top: 1px solid var(--line); margin-top: 8px; }
+
+/* Injeção: campos travados enquanto o SystemLab comanda o relé */
+fieldset.inj-lock { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset.inj-lock:disabled { opacity: .55; }
+button.tag-btn { cursor: pointer; border: 0; font: inherit; }
+button.tag-btn:hover { text-decoration: line-through; }

@@ -94,6 +94,7 @@ export interface SimConfig {
   analog_off_on_output: boolean
   analog_off_outputs: string[]
   analog_on: boolean
+  sl_isolated?: boolean
   halarm: boolean
   lop: boolean
   linka: boolean
@@ -149,6 +150,7 @@ export interface PanelData {
   breaker: { state: string; closed: boolean; operations: number }
   status: { group: number; trip: number; close: number; cf: number; recloser: string; shot: number; unresolved: number }
   sim: SimConfig
+  systemlab?: { linked: boolean; isolated: boolean }   // relé alimentado pelo SystemLab / isolado pelo usuário
   inputs: InputPoint[]
   outputs: OutputPoint[]
   meter: Record<string, number>
@@ -315,6 +317,7 @@ export interface SettingItem {
   value: string
   comment: string
   modified: boolean
+  original?: string | null   // valor do arquivo (só quando alterado)
 }
 export interface SettingsData {
   cls: string

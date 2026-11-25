@@ -389,6 +389,7 @@ async def get_panel(sid: str) -> dict:
             "shot": eng.rc.shot, "unresolved": len(eng.unresolved),
         },
         "sim": eng.field.cfg.to_dict(),
+        "systemlab": {"linked": eng.sl_linked(), "isolated": eng.field.cfg.sl_isolated},
         "inputs": [{"name": i.name, "label": i.label, "raw": eng.input_raw(i),
                     "value": eng.b(i.name), "breaker": i.name == eng.bk_input} for i in eng.inputs.values()],
         "outputs": eng.snapshot_outputs(),
@@ -467,12 +468,45 @@ async def force_breaker(sid: str, body: BreakerBody) -> dict:
 
 @app.post("/api/sessions/{sid}/sim")
 async def set_sim(sid: str, body: SimBody) -> dict:
+    """Simulação/injeção manual. Com o relé associado ao SystemLab (e não isolado), as grandezas analógicas vêm do SystemLab."""
     eng = _session(sid).engine
+    patch = dict(body.patch)
+    if "sl_isolated" in patch:
+        eng.set_isolated(bool(patch.pop("sl_isolated")))
+    if eng.sl_linked() and not eng.field.cfg.sl_isolated:
+        blocked = [k for k in patch if k in set(eng._analog_keys())]
+        for k in blocked:
+            patch.pop(k)
+        if blocked and not patch:
+            raise HTTPException(409, "A injeção analógica deste relé vem do SystemLab. Para injetar direto no DigitalRelay, "
+                                     "ligue \"Isolar do SystemLab\" no Painel frontal (cartão Medição).")
     try:
-        eng.set_sim(body.patch)
+        eng.set_sim(patch)
     except (ValueError, TypeError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return eng.field.cfg.to_dict()
+
+
+@app.post("/api/sessions/{sid}/systemlab")
+async def set_systemlab(sid: str, body: SimBody) -> dict:
+    """Grandezas calculadas pelo SystemLab para o relé associado a um IED (prevalecem sobre a injeção manual, salvo se isolado)."""
+    eng = _session(sid).engine
+    try:
+        eng.apply_systemlab(body.patch)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"isolated": eng.field.cfg.sl_isolated}
+
+
+@app.delete("/api/sessions/{sid}/settings/{cls}/{key}")
+async def revert_setting(sid: str, cls: str, key: str) -> dict:
+    """Desfaz a edição de um ajuste: volta ao valor original do arquivo .rdb."""
+    eng = _session(sid).engine
+    try:
+        value = eng.revert_setting(cls, key)
+    except KeyError as exc:
+        raise HTTPException(404, f"Ajuste inexistente: {exc}") from exc
+    return {"value": value}
 
 
 @app.post("/api/sessions/{sid}/fault")
@@ -564,7 +598,8 @@ async def get_settings(sid: str, cls: str) -> dict:
     out = []
     for key, val in items.items():
         expr, comment = split_comment(val)
-        out.append({"key": key, "value": val, "comment": comment, "modified": (cls, key) in st.modified})
+        mod = (cls, key) in st.modified
+        out.append({"key": key, "value": val, "comment": comment, "modified": mod, "original": st.original(cls, key) if mod else None})
     return {"cls": cls, "name": st.class_names.get(cls, cls), "items": out}
 
 

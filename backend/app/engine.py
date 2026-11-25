@@ -141,6 +141,9 @@ class RelayEngine:
         self._ex: dict[tuple[str, str], Expr] = {}
         self.meas: dict[str, float] = {k: 0.0 for k in (
             "IA", "IB", "IC", "IMAX", "IN", "IG", "I2", "VA", "VB", "VC", "VAB", "VBC", "VCA", "VG", "V2", "V1", "VS", "FREQ")}
+        self.sl_patch: dict = {}           # última injeção enviada pelo SystemLab
+        self.sl_time = -1e9                # instante (relógio do servidor) da última atualização do SystemLab
+        self.manual_analog: dict | None = None   # injeção manual guardada enquanto o SystemLab comanda
         self.vs_ang = 0.0                  # ângulo da tensão de sincronismo VS (°)
         self.sync_rot = 0.0                # giro acumulado de VS em relação a VP por escorregamento (°)
         self.group = 1
@@ -468,6 +471,50 @@ class RelayEngine:
         if "breaker_auto" in patch and not cfg.breaker_auto and self.bk_input in self.inputs:
             inp = self.inputs[self.bk_input]
             inp.raw = inp.filt   # sem "salto" ao passar para o modo manual
+
+    # ---------------------------------------------------- injeção vinda do SystemLab
+    SL_TIMEOUT = 15.0       # s sem atualização do SystemLab: o relé deixa de ser considerado associado
+
+    def _analog_keys(self) -> list[str]:
+        cfg = self.field.cfg.to_dict()
+        return [k for k in cfg if k == "analog_on" or re.fullmatch(r"(i[abc]|v[abc]|vs|w[234]i[abc]|in1)_(mag|ang)|vs_freq|freq|h[245]_pct", k)]
+
+    def sl_linked(self) -> bool:
+        """O SystemLab está alimentando este relé (atualização recente de um IED associado)."""
+        return time.time() - self.sl_time < self.SL_TIMEOUT
+
+    def apply_systemlab(self, patch: dict) -> None:
+        """Grandezas vindas do SystemLab: prevalecem sobre a injeção manual, salvo se o usuário isolou o relé (``sl_isolated``)."""
+        keys = set(self._analog_keys())
+        clean = {k: v for k, v in patch.items() if k in keys}
+        self.sl_patch.update(clean)
+        self.sl_time = time.time()
+        if not self.field.cfg.sl_isolated:
+            if self.manual_analog is None:                # guarda a injeção manual para quando o usuário isolar o relé
+                self.manual_analog = {k: getattr(self.field.cfg, k) for k in keys}
+            self.set_sim(clean)
+
+    def set_isolated(self, on: bool) -> None:
+        """Isola (True) ou volta a ligar (False) a injeção do relé ao SystemLab."""
+        cfg = self.field.cfg
+        if bool(on) == cfg.sl_isolated:
+            return
+        cfg.sl_isolated = bool(on)
+        if on:
+            if self.manual_analog:
+                self.set_sim(self.manual_analog)          # volta a injeção manual que o usuário tinha
+        else:
+            self.manual_analog = {k: getattr(cfg, k) for k in self._analog_keys()}
+            if self.sl_linked() and self.sl_patch:
+                self.set_sim(self.sl_patch)
+
+    def revert_setting(self, cls: str, key: str) -> str:
+        """Desfaz a edição: volta o ajuste ao valor do arquivo e reconstrói o relé."""
+        orig = self.settings.revert(cls, key)
+        self._ex.pop((cls, key), None)
+        self._rebuild()
+        self._detect_coils()
+        return orig
 
     def apply_setting(self, cls: str, key: str, value: str) -> None:
         self.settings.set_value(cls, key, value)
