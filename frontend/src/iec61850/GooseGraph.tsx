@@ -56,6 +56,12 @@ export function GooseGraph({ project, status }: { project: IecProject; status: I
   const [panMode, setPanMode] = useState(false)
   const pan = useRef<{ sx: number; sy: number; tx: number; ty: number } | null>(null)
   const [fitKey, setFitKey] = useState(0)
+  const [selKey, setSelKey] = useState<string | null>(null)        // trecho clicado ("pub→sub"): card flutuante à direita
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelKey(null) }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [])
   const names = project.ieds.map((i) => i.name)
 
   // posição padrão: IEDs em círculo
@@ -145,6 +151,7 @@ export function GooseGraph({ project, status }: { project: IecProject; status: I
         <button onClick={() => { setPos({}); save({}); center() }} title="Volta os IEDs para a disposição em círculo">Reorganizar</button>
       </div>
       {edges.length === 0 && <p className="hint">Nenhum IED assina GOOSE de outro IED do projeto.</p>}
+      <div className="gg-wrap">
       <svg
         ref={svgRef}
         className={`gg-svg ${panMode ? 'pan-mode' : ''}`}
@@ -196,8 +203,10 @@ export function GooseGraph({ project, status }: { project: IecProject; status: I
           const t = border(b, mid)
           const lbl = { x: (s.x + 2 * mid.x + t.x) / 4, y: (s.y + 2 * mid.y + t.y) / 4 }
           return (
-            <g key={`${e.pub}-${e.sub}`}>
-              <title>{`${e.pub} → ${e.sub}\n${e.cbs.join(', ')}\n${e.ok ? 'Comunicação ok' : `Sem comunicação: ${e.why}`}`}</title>
+            <g key={`${e.pub}-${e.sub}`} className={`gg-edge ${selKey === `${e.pub}→${e.sub}` ? 'sel' : ''}`}
+              onClick={() => { if (!panMode) setSelKey((k) => (k === `${e.pub}→${e.sub}` ? null : `${e.pub}→${e.sub}`)) }}>
+              <title>{`${e.pub} → ${e.sub}\n${e.cbs.join(', ')}\n${e.ok ? 'Comunicação ok' : `Sem comunicação: ${e.why}`}\n(clique para ver os detalhes)`}</title>
+              <path d={`M${s.x},${s.y} Q${mid.x},${mid.y} ${t.x},${t.y}`} fill="none" className="gg-hit" />
               <path d={`M${s.x},${s.y} Q${mid.x},${mid.y} ${t.x},${t.y}`} fill="none" className={e.ok ? 'gg-ok' : 'gg-off'}
                 markerEnd={`url(#gg-arrow-${e.ok ? 'ok' : 'off'})`} />
               <text x={lbl.x} y={lbl.y - 4} className="gg-cb" textAnchor="middle">{e.cbs.length > 1 ? `${e.cbs[0]} +${e.cbs.length - 1}` : e.cbs[0]}</text>
@@ -224,8 +233,81 @@ export function GooseGraph({ project, status }: { project: IecProject; status: I
         })}
         </g>
       </svg>
-      <p className="hint">Cada seta vai do publicador ao assinante (blocos GOOSE no rótulo; passe o mouse para ver todos e o motivo de uma falha). Arraste os IEDs para reorganizar; zoom pelos botões −/+ ou pela roda do mouse, e Pan (mão) para mover a vista.
+      {(() => {
+        const sel = edges.find((x) => `${x.pub}→${x.sub}` === selKey)
+        return sel ? <EdgeCard edge={sel} project={project} status={status} onClose={() => setSelKey(null)} /> : null
+      })()}
+      </div>
+      <p className="hint">Cada seta vai do publicador ao assinante (blocos GOOSE no rótulo); clique numa seta para ver GCBs, MAC, APPID, VLAN, estado e dados trocados. Arraste os IEDs para reorganizar; zoom pelos botões −/+ ou pela roda do mouse, e Pan (mão) para mover a vista.
         A comunicação só fica ativa com os relés instanciados no DigitalRelay, associados aos IEDs e em execução.</p>
     </section>
+  )
+}
+
+/** Card flutuante com os dados de um trecho (publicador → assinante): blocos GOOSE, endereçamento, estado e dados trocados. */
+function EdgeCard({ edge, project, status, onClose }: { edge: Edge; project: IecProject; status: IecStatus | null; onClose: () => void }) {
+  const pub = project.ieds.find((i) => i.name === edge.pub)
+  const sub = project.ieds.find((i) => i.name === edge.sub)
+  const pst = status?.ieds.find((s) => s.name === edge.pub)
+  const sst = status?.ieds.find((s) => s.name === edge.sub)
+  const fc = (f: { ld_inst: string; prefix: string; ln_class: string; ln_inst: string; do_name: string; da_name: string }) =>
+    `${f.ld_inst}/${f.prefix}${f.ln_class}${f.ln_inst}.${f.do_name}.${f.da_name}`
+  const Row = ({ k, v }: { k: string; v: React.ReactNode }) => <tr><td className="muted">{k}</td><td className="mono">{v === '' || v == null ? '–' : v}</td></tr>
+  return (
+    <aside className="gg-card" role="dialog" aria-label={`GOOSE ${edge.pub} → ${edge.sub}`} onPointerDown={(e) => e.stopPropagation()}>
+      <div className="row">
+        <h4>{edge.pub} → {edge.sub}</h4>
+        <span className="spacer" />
+        <button className="link" onClick={onClose} aria-label="Fechar" title="Fechar (Esc)">✕</button>
+      </div>
+      <p className={`gg-state ${edge.ok ? 'ok' : 'off'}`}>{edge.ok ? 'Comunicação ok' : `Sem comunicação: ${edge.why}`}</p>
+      {edge.cbs.map((cb) => {
+        const g = pub?.gcbs.find((x) => x.name === cb)
+        const s = sub?.subs.find((x) => x.pub_ied === edge.pub && x.cb_name === cb)
+        const ptx = pst?.pubs.find((x) => x.cb_name === cb)
+        const rx = sst?.subs.find((x) => x.pub_ied === edge.pub && x.cb_name === cb)
+        const rows: { idx: number; ref: string; bit: string; vb: string; val?: number }[] = []
+        ;(g?.entries ?? []).forEach((f, k) => {
+          if (f.da_name.toLowerCase() === 'q') return
+          const e = s?.entries.find((x) => x.index === k + 1)
+          const val = rx?.values?.[k]
+          if (e?.vb_hi) {
+            rows.push({ idx: k + 1, ref: `${fc(f)} - Lo`, bit: f.bit, vb: e.vb, val: val === undefined ? undefined : val ? 0 : 1 })
+            rows.push({ idx: k + 1, ref: `${fc(f)} - Hi`, bit: f.bit, vb: e.vb_hi, val })
+          } else rows.push({ idx: k + 1, ref: fc(f), bit: f.bit, vb: e?.vb ?? '', val })
+        })
+        return (
+          <section key={cb} className="gg-cbsec">
+            <h5>Bloco GOOSE {cb}</h5>
+            <table className="gg-kv"><tbody>
+              <Row k="Publicador" v={`${edge.pub}${pub?.ip ? ` (${pub.ip})` : ''}`} />
+              <Row k="Assinante" v={`${edge.sub}${sub?.ip ? ` (${sub.ip})` : ''}`} />
+              <Row k="GoCB" v={g ? `${edge.pub}${g.ld_inst}/LLN0$GO$${g.name}` : cb} />
+              <Row k="Dataset" v={g?.dataset} />
+              <Row k="GoID" v={g?.go_id} />
+              <Row k="ConfRev" v={g?.conf_rev} />
+              <Row k="MAC" v={g?.mac} />
+              <Row k="APPID" v={g?.appid} />
+              <Row k="VLAN / prioridade" v={g ? `${g.vlan_id || '–'} / ${g.vlan_prio || '–'}` : ''} />
+              <Row k="MinTime / MaxTime" v={g ? `${g.min_ms} / ${g.max_ms} ms` : ''} />
+              <Row k="Bit de status (pubRxStatus)" v={s?.status_vb} />
+              <Row k="Origem da assinatura" v={s?.source === 'SEL_GooseSubscription' ? 'SEL (privado)' : s?.source} />
+              <Row k="Publicação" v={ptx ? `stNum ${ptx.st_num} · sqNum ${ptx.sq_num} · ${ptx.sent} enviadas` : 'sem relé publicando'} />
+              <Row k="Recepção" v={rx ? `${rx.valid ? 'válida' : rx.reason || 'inválida'} · stNum ${rx.st_num} · sqNum ${rx.sq_num} · ${rx.rx_count} recebidas` : 'sem relé assinando'} />
+            </tbody></table>
+            {s && s.issues.length > 0 && <ul className="gg-issues">{s.issues.map((x, i) => <li key={i} className={x.level === 'error' ? 'err' : 'warn'}>{x.text}</li>)}</ul>}
+            <table className="tbl gg-data">
+              <thead><tr><th>#</th><th>Dado publicado</th><th>Bit</th><th>VB</th><th>Valor</th></tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}><td>{r.idx}</td><td className="mono">{r.ref}</td><td className="mono">{r.bit || '–'}</td><td className="mono">{r.vb || '–'}</td>
+                    <td className="mono">{r.val === undefined || !rx?.valid ? '–' : r.val}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )
+      })}
+    </aside>
   )
 }
