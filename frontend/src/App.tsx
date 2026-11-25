@@ -36,6 +36,37 @@ const TABS: [Tab, string][] = [
 ]
 const STORAGE = 'sel751.sim'
 
+/** Lê uma chave JSON do localStorage (null se ausente ou inválida). */
+function readLocal(key: string): unknown {
+  try { return JSON.parse(localStorage.getItem(key) ?? 'null') } catch { return null }
+}
+
+/** Exporta o IED simulado: ajustes (com as edições), arquivos originais e estado vindos do backend, mais o que só existe no
+ *  navegador — textos personalizados (entradas, saídas, VB/RB/CB) e títulos dos botões do frontal. */
+async function exportRelay(sid: string, relayId: string, device: string) {
+  try {
+    const data = await api.exportSession(sid)
+    const out = {
+      ...data,
+      exported_at: new Date().toISOString(),
+      front_panel: {
+        texts: readLocal(`sel751.texts.${relayId}`) ?? {},           // textos ajustados (aba Textos / frontal)
+        pb_titles: readLocal(`sel751.pbtitles.${relayId}`),          // textos centrais dos botões PB1–PB8 (null = padrão)
+      },
+    }
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${(device || relayId).replace(/[\\/:*?"<>|]+/g, '_').trim() || 'ied'}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  } catch (e) {
+    window.alert('Falha ao exportar: ' + (e instanceof Error ? e.message : String(e)))
+  }
+}
+
 function loadSaved(): { sid?: string; uid?: string; uids?: string[]; sids?: string[] } {
   try {
     return JSON.parse(localStorage.getItem(STORAGE) ?? '{}')
@@ -145,6 +176,34 @@ function DigitalRelayApp() {
     [uploads, info, list, adding],
   )
 
+  /** Importa um IED exportado em JSON: o backend recria a sessão; os textos do frontal voltam para o localStorage do relé. */
+  const onImport = useCallback(async (file: File) => {
+    setBusy(true)
+    setError(null)
+    try {
+      let data: { front_panel?: { texts?: unknown; pb_titles?: unknown } }
+      try { data = JSON.parse(await file.text()) } catch { throw new Error('O arquivo não é um JSON válido.') }
+      const s = await api.importSession(data)
+      const fp = data.front_panel
+      try {
+        if (fp?.texts && typeof fp.texts === 'object') localStorage.setItem(`sel751.texts.${s.relay_id}`, JSON.stringify(fp.texts))
+        if (Array.isArray(fp?.pb_titles) && fp.pb_titles.length === 8) localStorage.setItem(`sel751.pbtitles.${s.relay_id}`, JSON.stringify(fp.pb_titles))
+      } catch { /* armazenamento indisponível */ }
+      const next = [...list, s]
+      setList(next)
+      setAdding(false)
+      setInfo(s)
+      setView('sim')
+      setTab('panel')
+      save({ sid: s.id, uid: uploads[uploads.length - 1]?.upload_id, uids: uidsOf(uploads), sids: next.map((x) => x.id) })
+      if (s.warnings?.length) window.alert('IED importado com avisos:\n- ' + s.warnings.join('\n- '))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [list, uploads])
+
   const select = (s: SessionInfo) => { setInfo(s); setView('sim'); save({ sid: s.id, uid: uploads[uploads.length - 1]?.upload_id, uids: uidsOf(uploads), sids: list.map((x) => x.id) }) }
   const refreshInfo = () => { if (info) api.getSession(info.id).then((s) => { setInfo(s); setList((l) => l.map((x) => (x.id === s.id ? s : x))) }).catch(() => undefined) }
   const remove = (s: SessionInfo) => {
@@ -173,6 +232,7 @@ function DigitalRelayApp() {
         onRestart={() => info && api.restart(info.id)}
         onChange={() => { setConfig(false); setAdding(false); setView('select') }}
         onConfig={() => setConfig((c) => !c)}
+        onExport={() => { if (info) exportRelay(info.id, info.relay_id, info.device) }}
         configOpen={config}
       />
       {config ? (
@@ -187,6 +247,7 @@ function DigitalRelayApp() {
           onRemove={onRemoveUpload}
           canReturn={!!info}
           onReturn={() => setView('sim')}
+          onImport={onImport}
         />
       ) : (
         <main>

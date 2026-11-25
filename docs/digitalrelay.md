@@ -290,3 +290,14 @@ Suportado a partir de `RELAYTYPE=SEL-787-*` (`backend/app/engine787.py`, `protec
   elementos combinados (50P121P, 51PC12P…), 50P3xA/B/C (TCs separados); 27/59/25/32/81 vêm do motor do 751.
 - **Disparo/fechamento por enrolamento**: TRn → TRIPn e TRXFMR → TRIPXFMR (TDURD, ULTRIPn/ULTRXFMR), CLn → CLOSEn (CFDn, ULCLn) e um disjuntor simulado por
   enrolamento; as bobinas são deduzidas das saídas OUTxxx que citam TRIPn/TRIPXFMR/CLOSEn. Sem religamento (79). `52An` só segue o disjuntor se for uma entrada (INxxx).
+
+## Exportar o IED em JSON
+
+Botão **⬇ Exportar JSON** na barra do simulador (`GET /api/sessions/<sid>/export` + dados do navegador). O arquivo (`format: "eclipse-digitalrelay"`) contém:
+`settings` (todas as classes do ajuste com os valores atuais, já com as edições da aba Ajustes), `modified` (pares classe/ajuste alterados no simulador),
+`original_files` (arquivos do ajuste como vieram do .rdb), `simulation` (injeção `SimConfig`, grupo, disjuntor, entradas, variáveis forçadas, bits mantidos,
+IED IEC 61850 associado, velocidade) e `front_panel` (textos personalizados `sel751.texts.<relay_id>` e títulos dos botões `sel751.pbtitles.<relay_id>`).
+
+**Importar:** botão **⬆ Importar JSON** na tela de carga (`POST /api/sessions/import`). Cria um novo relé a partir de `original_files`, reaplica os ajustes de
+`modified` com os valores de `settings`, restaura a injeção, o disjuntor, as entradas, os forçados, os bits mantidos, a velocidade e, se o IED existir no
+projeto IEC 61850 atual, a associação. Os textos do frontal (`front_panel`) voltam para o localStorage do relé. O que não puder ser restaurado vem em `warnings`.

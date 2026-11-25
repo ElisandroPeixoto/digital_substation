@@ -197,6 +197,112 @@ async def get_session(sid: str) -> dict:
     return info
 
 
+EXPORT_FORMAT = "eclipse-digitalrelay"
+
+
+@app.get("/api/sessions/{sid}/export")
+async def export_session(sid: str) -> dict:
+    """IED simulado em JSON: todos os ajustes do .rdb com as edições feitas no simulador, os arquivos originais do ajuste,
+    a injeção e o estado configurado pelo usuário. Os textos do frontal (só do navegador) são acrescentados pelo frontend."""
+    s = _session(sid)
+    eng = s.engine
+    st = eng.settings
+    files = {k: (v.decode("latin-1") if isinstance(v, bytes) else v) for k, v in s.relay.files.items()}
+    return {
+        "format": EXPORT_FORMAT, "version": 1,
+        "model": eng.model, "device": eng.device_name, "relay_id": s.relay.id, "relay_name": s.relay.name, "filename": s.filename,
+        "header": st.header, "class_names": st.class_names,
+        "settings": {cls: dict(items) for cls, items in st.sections.items()},          # valores atuais (com as edições)
+        "modified": sorted([cls, key] for cls, key in st.modified),                     # ajustes alterados no simulador
+        "original_files": files,                                                         # arquivos do ajuste como vieram do .rdb
+        "simulation": {
+            "time": round(eng.t, 3), "running": s.running, "speed": s.speed, "group": eng.group,
+            "injection": eng.field.cfg.to_dict(),
+            "breaker": {"closed": eng.field.breaker.closed, "operations": eng.field.breaker.open_count},
+            "inputs": {i.name: bool(i.raw) for i in eng.inputs.values()},
+            "forced": dict(eng.forced), "held_bits": dict(eng.fixed),
+            "iec61850_ied": manager.net.bindings.get(sid),
+        },
+    }
+
+
+MAX_IMPORT_FILES = 200
+
+
+@app.post("/api/sessions/import")
+async def import_session(body: dict) -> dict:
+    """Recria um IED a partir do JSON exportado (``/export``): arquivos originais do ajuste, edições feitas no simulador e o estado
+    da simulação (injeção, disjuntor, entradas, forçados, bits mantidos, velocidade e IED IEC 61850, se existir no projeto atual).
+    Os textos do frontal ficam no navegador e são restaurados pelo frontend."""
+    from .rdb import RdbRelay
+
+    if body.get("format") != EXPORT_FORMAT:
+        raise HTTPException(400, "O arquivo não é uma exportação de IED do DigitalRelay (formato desconhecido).")
+    files = body.get("original_files")
+    if not isinstance(files, dict) or not files or len(files) > MAX_IMPORT_FILES \
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in files.items()):
+        raise HTTPException(400, "JSON inválido: faltam os arquivos do ajuste (original_files).")
+    relay_id = str(body.get("relay_id") or "IED importado")[:64]
+    relay = RdbRelay(id=relay_id, name=str(body.get("relay_name") or body.get("device") or relay_id)[:120], files=dict(files))
+    try:
+        sess = manager.create(relay, str(body.get("filename") or "importado.json")[:200])
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, f"Ajustes inválidos: {exc}") from exc
+    eng = sess.engine
+    warnings: list[str] = []
+    # 1) ajustes alterados no simulador (valores atuais do JSON para os pares listados em "modified")
+    settings = body.get("settings") if isinstance(body.get("settings"), dict) else {}
+    for pair in body.get("modified") or []:
+        try:
+            cls, key = str(pair[0]), str(pair[1])
+            value = settings[cls][key]
+            eng.apply_setting(cls, key, str(value))
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            warnings.append(f"ajuste {pair} ignorado ({exc})")
+    # 2) estado da simulação
+    sim = body.get("simulation") if isinstance(body.get("simulation"), dict) else {}
+    inj = sim.get("injection")
+    if isinstance(inj, dict):
+        cfg_keys = set(eng.field.cfg.to_dict())
+        try:
+            eng.set_sim({k: v for k, v in inj.items() if k in cfg_keys and (isinstance(v, (int, float, bool, str, list)) or v is None)})
+        except (TypeError, ValueError) as exc:
+            warnings.append(f"injeção parcialmente ignorada ({exc})")
+    bk = sim.get("breaker")
+    if isinstance(bk, dict) and isinstance(bk.get("closed"), bool) and eng.model != "2440":
+        eng.local_breaker(bk["closed"])
+    for name, raw in (sim.get("inputs") or {}).items() if isinstance(sim.get("inputs"), dict) else []:
+        if isinstance(raw, bool) and name in eng.inputs and name != eng.bk_input:
+            eng.inputs[name].raw = raw
+    for name, value in (sim.get("forced") or {}).items() if isinstance(sim.get("forced"), dict) else []:
+        try:
+            eng.force(str(name), float(value))
+        except (TypeError, ValueError) as exc:
+            warnings.append(f"forçado {name} ignorado ({exc})")
+    for name, on in (sim.get("held_bits") or {}).items() if isinstance(sim.get("held_bits"), dict) else []:
+        try:
+            eng.set_bit(str(name), "set" if on else "clear")
+        except ValueError as exc:
+            warnings.append(f"bit {name} ignorado ({exc})")
+    if isinstance(sim.get("running"), bool):
+        sess.running = sim["running"]
+    if sim.get("speed") in SPEEDS:
+        sess.speed = float(sim["speed"])
+    ied = sim.get("iec61850_ied")
+    if isinstance(ied, str) and ied:
+        try:
+            manager.net.bind(sess.id, ied)
+            manager.net.reset()
+        except ValueError:
+            warnings.append(f"IED IEC 61850 \"{ied}\" não está no projeto atual: associação não restaurada")
+    info = sess.info()
+    info["presets"] = {k: v["label"] for k, v in PRESETS.items()}
+    info["fault_types"] = list(FAULT_TYPES)
+    info["ied"] = manager.net.bindings.get(sess.id)
+    info["warnings"] = warnings
+    return info
+
+
 @app.delete("/api/sessions/{sid}")
 async def delete_session(sid: str) -> dict:
     manager.delete(sid)

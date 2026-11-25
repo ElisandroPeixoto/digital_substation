@@ -319,7 +319,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
   const inj = new Map<number, Cx>() // injeção de corrente (Norton)
   const addShunt = (n: number, y: Cx) => shunt.set(n, add(shunt.get(n) ?? cx(), y))
   const addInj = (n: number, i: Cx) => inj.set(n, add(inj.get(n) ?? cx(), i))
-  const sources: { e: El; n: number; ys: Cx; E: Cx }[] = []
+  const sources: { e: El; n: number; ys: Cx; y0: Cx; E: Cx }[] = []
   const trafoY = new Map<number, Cx>()
   /** Linha: impedâncias série (pu) de sequência positiva/negativa (z1) e zero (z0). */
   const lineZ = new Map<number, { z1: Cx; z0: Cx }>()
@@ -360,10 +360,10 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
     } else if (e.kind === 'source') {
       const n = node(e, 0)
       const vkv = Math.max(num(e, 'vkv'), 1e-6)
-      const zAbs = (SBASE / Math.max(num(e, 'ssc'), 1e-6)) * Math.pow(vkv / bk(n), 2)
-      const ys = div(cx(1), zUnit(zAbs, Math.max(num(e, 'xr'), 0)))
+      const { z1, z0 } = sourceZ(e, bk(n))
+      const ys = div(cx(1), z1)
       const E = polar(vkv / bk(n), num(e, 'ang'))
-      sources.push({ e, n, ys, E })
+      sources.push({ e, n, ys, y0: div(cx(1), z0), E })
       addShunt(n, ys)
       addInj(n, mul(E, ys))
     } else if (e.kind === 'load') {
@@ -640,7 +640,7 @@ interface FaultCtx {
   node: (e: El, k: number) => number
   nodes: number[]
   bk: (n: number) => number
-  sources: { e: El; n: number; ys: Cx; E: Cx }[]
+  sources: { e: El; n: number; ys: Cx; y0: Cx; E: Cx }[]
   loadY: Map<number, Cx>
   trafoY: Map<number, Cx>
   lineZ: Map<number, { z1: Cx; z0: Cx }>
@@ -664,7 +664,26 @@ function windings(e: El): [number, number] {
   return [t(g.hv), t(g.lv)]
 }
 const srcGrounded = (e: El): boolean => flag(e, 'gnd')
-const z0Ratio = (e: El): number => Math.max(num(e, 'z0r') || 1, 1e-3)
+
+/** Impedâncias de sequência positiva (= negativa) e zero da fonte CA, em pu na base da barra (vb = kV base do nó).
+ *  Modo 0: Ssc (MVA) e X1/R1 dão Z1; R0 = R1·(R0/R1) e X0 = X1·(X0/X1). Diagramas antigos com Z0/Z1 (z0r) continuam valendo.
+ *  Modo 1: Isc trifásica (kA ∠θ3) e monofásica (kA ∠θ1) com E = Vnom/√3 ∠0°: Z1 = E / I3φ e Z0 = 3E / I1φ − 2·Z1. */
+export function sourceZ(e: El, vb: number): { z1: Cx; z0: Cx } {
+  const vkv = Math.max(num(e, 'vkv'), 1e-6)
+  const tiny = (z: Cx) => (abs(z) < 1e-9 ? cx(1e-6, 0) : z)
+  if (num(e, 'zmode') === 1) {
+    const zbase = (vb * vb) / SBASE                              // Ω
+    const ef = vkv / Math.sqrt(3)                                // kV fase-neutro
+    const z1 = div(cx(ef), polar(Math.max(num(e, 'isc3'), 1e-6), num(e, 'isc3ang')))
+    const z0 = sub(div(cx(3 * ef), polar(Math.max(num(e, 'isc1'), 1e-6), num(e, 'isc1ang'))), mul(cx(2), z1))
+    return { z1: tiny(mul(z1, cx(1 / zbase))), z0: tiny(mul(z0, cx(1 / zbase))) }
+  }
+  const zAbs = (SBASE / Math.max(num(e, 'ssc'), 1e-6)) * Math.pow(vkv / vb, 2)
+  const z1 = zUnit(zAbs, Math.max(num(e, 'xr'), 0))
+  const legacy = e.p.r0r1 == null && e.p.x0x1 == null && typeof e.p.z0r === 'number'
+  const z0 = legacy ? mul(z1, cx(Math.max(e.p.z0r as number, 1e-3))) : cx(z1.re * Math.max(num(e, 'r0r1'), 0), z1.im * Math.max(num(e, 'x0x1'), 0))
+  return { z1: tiny(z1), z0: tiny(z0) }
+}
 const rot3 = (k: number): Cx => { const m = ((k % 3) + 3) % 3; return m === 0 ? cx(1) : m === 1 ? A1 : A2 }
 
 interface SeqI { i1: Cx; i2: Cx; i0: Cx }
@@ -757,7 +776,7 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
     }
     for (const s of sources) {
       if (seq === 0) {
-        if (srcGrounded(s.e)) shunt(s.n, div(s.ys, cx(z0Ratio(s.e))))
+        if (srcGrounded(s.e)) shunt(s.n, s.y0)
       } else {
         shunt(s.n, s.ys)
         if (seq === 1) inject(s.n, mul(s.E, s.ys))
@@ -907,7 +926,7 @@ function faultStudy(ctx: FaultCtx, base: Map<number, ElResult>): { info: FaultIn
       I = [{
         i1: mul(sub(s.E, v.v1), s.ys),
         i2: sub(cx(), mul(v.v2, s.ys)),
-        i0: srcGrounded(e) ? sub(cx(), mul(v.v0, div(s.ys, cx(z0Ratio(e))))) : cx(),
+        i0: srcGrounded(e) ? sub(cx(), mul(v.v0, s.y0)) : cx(),
       }]
     } else if (e.kind === 'load') {
       const y = loadY.get(e.id)!

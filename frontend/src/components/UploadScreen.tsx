@@ -11,11 +11,12 @@ interface Props {
   onLoad: (upload: UploadSummary, relay: RelaySummary) => void
   onRemove: (uploadId: string) => void
   canReturn: boolean
+  onImport: (file: File) => void
   onReturn: () => void
 }
 
 /** Tela de carga de arquivos .rdb (mesmo padrão do app IEC61850: botão "Adicionar arquivo(s)" e um cartão por arquivo). */
-export function UploadScreen({ uploads, busy, error, onFiles, onLoad, onRemove, canReturn, onReturn }: Props) {
+export function UploadScreen({ uploads, busy, error, onFiles, onLoad, onRemove, canReturn, onReturn, onImport }: Props) {
   const [drag, setDrag] = useState(false)
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<string | null>(null)
@@ -45,6 +46,10 @@ export function UploadScreen({ uploads, busy, error, onFiles, onLoad, onRemove, 
         <label className="btn primary">
           {busy ? 'Processando…' : 'Adicionar arquivo(s)'}
           <input type="file" accept=".rdb" multiple hidden onChange={(e) => { pick(e.target.files); e.target.value = '' }} />
+        </label>
+        <label className="btn" title="Recria um IED a partir de um JSON exportado pelo DigitalRelay (ajustes, edições, injeção e textos do frontal)">
+          ⬆ Importar JSON
+          <input type="file" accept="application/json,.json" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onImport(f) }} />
         </label>
         {canReturn && <button onClick={onReturn}>← Voltar ao simulador em execução</button>}
         {uploads.length > 0 && <input className="search" placeholder="Filtrar ajustes…" value={q} onChange={(e) => setQ(e.target.value)} />}

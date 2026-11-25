@@ -188,3 +188,40 @@ def test_local_default_inputs_and_unresolved_clean():
     run(eng, 0.2)
     assert not eng.unresolved - {"DRDOPT"}
     assert math.isclose(eng.meas["W1_IMAX"], 3.0, rel_tol=1e-6)
+
+
+def test_export_json_includes_edits():
+    """Exportação do IED: ajustes atuais (com edições), lista de alterados, arquivos originais e estado da simulação."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app, manager
+    from app.rdb import RdbRelay
+
+    one = "".join(f'{k},"{v}"\n' for k, v in G1.items())
+    files = {"set_1.txt": HEADER + "[1]\n" + one, "set_L1.txt": HEADER + '[L1]\nELAT,"0"\nESV,"0"\nOUT401,"TRIP1 OR TRIPXFMR"\n',
+             "Misc/Device.txt": "787 exportacao"}
+    sess = manager.create(RdbRelay(id="787X", name="787 exportacao", files=files), "teste.rdb")
+    try:
+        c = TestClient(app)
+        assert c.patch(f"/api/sessions/{sess.id}/settings", json={"cls": "1", "key": "O87P", "value": "0.5"}).status_code == 200
+        j = c.get(f"/api/sessions/{sess.id}/export").json()
+        assert j["format"] == "eclipse-digitalrelay" and j["model"] == "787"
+        assert j["settings"]["1"]["O87P"] == "0.5" and ["1", "O87P"] in j["modified"]
+        assert '"0.3"' in j["original_files"]["set_1.txt"]                  # arquivo original preservado
+        assert "injection" in j["simulation"] and j["simulation"]["group"] == 1
+        # importação: recria o IED com a edição e o estado
+        j["simulation"]["injection"]["in1_mag"] = 123.0
+        j["simulation"]["forced"] = {"OUT401": 1.0}
+        r = c.post("/api/sessions/import", json=j)
+        assert r.status_code == 200, r.text
+        info = r.json()
+        try:
+            eng2 = manager.get(info["id"]).engine
+            assert info["model"] == "787" and info["warnings"] == []
+            assert eng2.settings.get("1", "O87P") == "0.5" and ("1", "O87P") in eng2.settings.modified
+            assert eng2.field.cfg.in1_mag == 123.0 and eng2.forced == {"OUT401": 1.0}
+        finally:
+            manager.delete(info["id"])
+        assert c.post("/api/sessions/import", json={"format": "outro"}).status_code == 400
+    finally:
+        manager.delete(sess.id)

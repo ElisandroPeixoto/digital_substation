@@ -1333,7 +1333,7 @@ export function SystemLabApp() {
                 <input type="text" className="numinput" value={selEl.name} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, name: e.target.value }))} />
               </label>
             )}
-            {KINDS[selEl.kind].fields.filter((f) => !(f.key === 'closed' && (selEl.kind === 'breaker' || selEl.kind === 'switch')) && !(f.key === 'ph' && num(selEl, 'phases') !== 1)).map((f) => (
+            {KINDS[selEl.kind].fields.filter((f) => !(f.key === 'closed' && (selEl.kind === 'breaker' || selEl.kind === 'switch')) && !(f.key === 'ph' && num(selEl, 'phases') !== 1) && (!f.when || num(selEl, f.when.key) === f.when.v)).map((f) => (
               <label key={f.key} className="sl-field">
                 <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
                 {f.type === 'bool' ? (

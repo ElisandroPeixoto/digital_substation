@@ -72,6 +72,8 @@ export interface Field {
   min?: number
   /** type 'select': valor numérico guardado → rótulo. */
   options?: { v: number; l: string }[]
+  /** Mostra o campo só quando o parâmetro `key` vale `v` (ex.: modo de impedância da fonte). */
+  when?: { key: string; v: number }
 }
 
 /** Tipos de falta (valor guardado em `type` do elemento Falta). */
@@ -133,14 +135,20 @@ export const KINDS: Record<Kind, KindInfo> = {
   source: {
     label: 'Fonte',
     prefix: 'G',
-    defaults: { vkv: 69, ang: 0, ssc: 500, xr: 10, gnd: true, z0r: 1 },
+    defaults: { vkv: 69, ang: 0, zmode: 0, ssc: 500, xr: 10, r0r1: 1, x0x1: 1, isc3: 4, isc3ang: -85, isc1: 3, isc1ang: -80, gnd: true },
     fields: [
       { key: 'vkv', label: 'Tensão nominal (fase-fase)', unit: 'kV', type: 'number', min: 0 },
       { key: 'ang', label: 'Ângulo da tensão', unit: '°', type: 'number' },
-      { key: 'ssc', label: 'Potência de curto-circuito', unit: 'MVA', type: 'number', min: 0 },
-      { key: 'xr', label: 'Relação X/R', type: 'number', min: 0 },
       { key: 'gnd', label: 'Neutro aterrado', type: 'bool' },
-      { key: 'z0r', label: 'Z0/Z1 (seq. zero; só se aterrado)', type: 'number', min: 0.01 },
+      { key: 'zmode', label: 'Impedância da fonte', type: 'select', options: [{ v: 0, l: 'Potência de curto e relações X/R' }, { v: 1, l: 'Isc máx (trifásica e monofásica)' }] },
+      { key: 'ssc', label: 'Potência de curto-circuito', unit: 'MVA', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
+      { key: 'xr', label: 'X1/R1', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
+      { key: 'r0r1', label: 'R0/R1', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
+      { key: 'x0x1', label: 'X0/X1', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
+      { key: 'isc3', label: 'Isc trifásica – módulo', unit: 'kA', type: 'number', min: 0, when: { key: 'zmode', v: 1 } },
+      { key: 'isc3ang', label: 'Isc trifásica – ângulo', unit: '°', type: 'number', when: { key: 'zmode', v: 1 } },
+      { key: 'isc1', label: 'Isc monofásica – módulo', unit: 'kA', type: 'number', min: 0, when: { key: 'zmode', v: 1 } },
+      { key: 'isc1ang', label: 'Isc monofásica – ângulo', unit: '°', type: 'number', when: { key: 'zmode', v: 1 } },
     ],
   },
   breaker: {

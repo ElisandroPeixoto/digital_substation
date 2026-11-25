@@ -11,10 +11,11 @@ interface Props {
   onRestart: () => void
   onChange: () => void
   onConfig: () => void
+  onExport: () => void
   configOpen: boolean
 }
 
-export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, onConfig, configOpen }: Props) {
+export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, onConfig, onExport, configOpen }: Props) {
   const { prefs } = usePrefs()
   return (
     <header className="topbar">
@@ -45,6 +46,7 @@ export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, 
           </label>
           <button onClick={onRestart} title="Reinicia o relé com os ajustes originais">↻ Reiniciar</button>
           <button onClick={onChange}>Trocar ajuste</button>
+          <button onClick={onExport} title="Baixa um JSON com todos os ajustes do .rdb (incluindo os editados no simulador), a injeção e os textos do frontal">⬇ Exportar JSON</button>
         </div>
       )}
       <button className={`gear ${configOpen ? 'active' : ''}`} onClick={onConfig} title="Configurações" aria-label="Configurações">⚙</button>

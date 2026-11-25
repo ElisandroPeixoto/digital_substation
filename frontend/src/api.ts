@@ -57,6 +57,8 @@ export const api = {
 
   createSession: (upload_id: string, relay_id: string) => req<SessionInfo>('POST', '/sessions', { upload_id, relay_id }),
   getSession: (sid: string) => req<SessionInfo>('GET', `/sessions/${sid}`),
+  exportSession: (sid: string) => req<Record<string, unknown>>('GET', `/sessions/${sid}/export`),
+  importSession: (data: unknown) => req<SessionInfo & { warnings?: string[] }>('POST', '/sessions/import', data),
   deleteSession: (sid: string) => req<unknown>('DELETE', `/sessions/${sid}`),
   restart: (sid: string) => req<unknown>('POST', `/sessions/${sid}/restart`),
   control: (sid: string, body: { running?: boolean; speed?: number }) =>
