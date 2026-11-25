@@ -160,15 +160,17 @@ export function IEC61850App() {
     <div className="app iec">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">⚡</span><div><b>IEC61850</b><small>{empty ? 'Carregue arquivos .scd / .cid / .icd' : project.files.join(' · ')}</small></div></div>
-        <div className="controls">
+      </header>
+      <main>
+        {/* mesmo padrão da tela de carga do DigitalRelay: barra com "Adicionar arquivo(s)" e, abaixo, o cartão "Nenhum arquivo carregado" */}
+        <div className="upload-bar">
           <label className="btn primary">{busy ? 'Lendo…' : 'Adicionar arquivo(s)'}
             <input type="file" accept=".scd,.cid,.icd,.xml" multiple hidden onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} />
           </label>
           {!empty && <button onClick={() => api.iecClear().then(reload)}>Limpar projeto</button>}
+          <span className="muted">{empty ? 'Arquivos SCL (.scd / .cid / .icd)' : project.files.join(' · ')}</span>
         </div>
-      </header>
-      <main>
-        {err && <p className="err-text">{err}</p>}
+        {err && <div className="alert">{err}</div>}
         {empty ? (
           <section className="card"><h3>Nenhum arquivo carregado</h3>
             <p className="hint">Envie um ou vários arquivos SCL (.scd de subestação ou .cid de cada relé). O Eclipse mostra os blocos GOOSE, publicadores, assinantes e, em arquivos da SEL, os bits virtuais assinados, e permite simular a troca de mensagens entre relés instanciados no DigitalRelay.</p>

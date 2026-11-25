@@ -77,7 +77,7 @@ export function HomeView() {
       <div className="ecl-apps">
         {APPS.map((a) => (
           <a key={a.id} className="ecl-app" href={a.route}>
-            <img className="ecl-app-img" src={a.icon} alt="" width={96} height={96} />
+            <img className="ecl-app-img" src={a.icon} alt="" width={77} height={77} />
             <b>{a.name}</b>
           </a>
         ))}

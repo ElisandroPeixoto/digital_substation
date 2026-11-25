@@ -4,8 +4,7 @@ import { simTime, usePrefs } from '../prefs'
 import type { SessionBrief } from '../types'
 import {
   BUS_MAX_CELLS, FAULT_TYPES, GRID, KINDS, TP_PHASES, tpPhase, tpTag, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
-  type Diagram, type El, type Kind, type PortRef,
-} from './model'
+  type Diagram, type El, type Kind, type PortRef, DEFAULT_TITLE } from './model'
 import { DEFAULT_SBASE, solve, type ElResult, type FaultStudy, type Ph, type PhasorSet } from './solver'
 import { ElementSymbol, SymbolShape } from './symbols'
 import { ShortcutEditor, ShortcutPanel } from './Shortcuts'
@@ -74,7 +73,7 @@ const EXPORT_FORMAT = 'eclipse-systemlab'
 function parseImport(text: string): { diagram: Diagram; settings?: { sbase: number; pu: boolean } } {
   let j: unknown
   try { j = JSON.parse(text) } catch { throw new Error('O arquivo não é um JSON válido.') }
-  const o = j as { format?: string; diagram?: { els?: unknown; wires?: unknown }; settings?: { sbase?: number; pu?: boolean } }
+  const o = j as { format?: string; diagram?: { els?: unknown; wires?: unknown; title?: unknown; desc?: unknown }; settings?: { sbase?: number; pu?: boolean } }
   if (!o || typeof o !== 'object' || o.format !== EXPORT_FORMAT || !o.diagram) throw new Error('O arquivo não é uma exportação do SystemLab (formato desconhecido).')
   const rawEls = o.diagram.els
   const rawWires = o.diagram.wires
@@ -94,7 +93,9 @@ function parseImport(text: string): { diagram: Diagram; settings?: { sbase: numb
   const wires = (rawWires as Record<string, unknown>[]).filter((w) => w && isNum(w.id) && port(w.a) && port(w.b) && ids.has(w.a[0]) && ids.has(w.b[0])) as unknown as Diagram['wires']
   const nextId = Math.max(1, ...els.map((e) => e.id), ...wires.map((w) => w.id)) + 1
   const settings = o.settings && isNum(o.settings.sbase) && o.settings.sbase > 0 ? { sbase: o.settings.sbase, pu: o.settings.pu === true } : undefined
-  return { diagram: { els, wires: pruneTaps(wires), nextId }, settings }
+  const title = typeof o.diagram.title === "string" && o.diagram.title.trim() ? o.diagram.title.slice(0, 120) : DEFAULT_TITLE
+  const desc = typeof o.diagram.desc === "string" ? o.diagram.desc.slice(0, 2000) : ""
+  return { diagram: { els, wires: pruneTaps(wires), nextId, title, desc }, settings }
 }
 
 /** Ícone de contato (traço simples, na cor do texto): fechado = ligado; aberto = lâmina levantada. */
@@ -111,6 +112,17 @@ function SwitchIcon({ closed }: { closed: boolean }) {
 const ICON = { viewBox: '0 0 24 24', width: 20, height: 20, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
 
 /** Olho (mostrar dados) ou olho riscado (ocultar dados). */
+function HandIcon() {
+  return (
+    <svg {...ICON}>
+      <path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12" />
+      <path d="M11 11.5V4a1.5 1.5 0 0 1 3 0v7.5" />
+      <path d="M14 11.5V5.5a1.5 1.5 0 0 1 3 0V13" />
+      <path d="M17 9.5a1.5 1.5 0 0 1 3 0V15a7 7 0 0 1-7 7h-1.2a6 6 0 0 1-4.4-1.9L4.3 16.8a1.6 1.6 0 0 1 2.3-2.2L8 16" />
+    </svg>
+  )
+}
+
 function EyeIcon({ off }: { off: boolean }) {
   return (
     <svg {...ICON}>
@@ -171,7 +183,7 @@ function TextEditor({ value, onChange }: { value: string; onChange: (t: string) 
 }
 
 function emptyDiagram(): Diagram {
-  return { els: [], wires: [], nextId: 1 }
+  return { els: [], wires: [], nextId: 1, title: DEFAULT_TITLE, desc: '' }
 }
 
 function load(): Diagram {
@@ -325,7 +337,7 @@ function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
     case 'load': return r.energized ? [`${fP(r.extra.p)} · ${fQ(r.extra.q)}`, fV({ mag: r.v[0].mag, ang: 0 }, r.kvb?.[0]).replace(/ ∠.*$/, '')] : ['desenergizado']
     case 'breaker':
     case 'switch': {
-      if (!flag(el, 'closed')) return ['aberto']
+      if (!flag(el, 'closed')) return []                                // aberto: o símbolo já mostra o estado
       const main = r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}` : 'desenergizado'
       return r.note ? [main, `⚠ ${r.note}`] : [main]
     }
@@ -408,6 +420,9 @@ export function SystemLabApp() {
   const viewRef = useRef(view)
   viewRef.current = view
   const spaceDown = useRef(false)
+  const [panMode, setPanMode] = useState(false)                     // ferramenta Pan (mão): botão esquerdo arrasta a vista
+  const panModeRef = useRef(false)
+  panModeRef.current = panMode
 
   const dgRef = useRef(dg)
   dgRef.current = dg
@@ -667,9 +682,12 @@ export function SystemLabApp() {
       } else if ((e.key === 'v' || e.key === 'V') && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         pasteClip(mouseSeen.current ? mouseRef.current : undefined)
-      } else if (e.key === 'r' || e.key === 'R') rotateSel()
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'p' || e.key === 'P')) setPanMode((v) => !v)       // P: ferramenta Pan (mão)
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'e' || e.key === 'E')) togglePanel('tools')           // E: aba Elementos
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.shiftKey && (e.key === 'r' || e.key === 'R')) rotateSel()      // Shift+R: girar
+      else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'r' || e.key === 'R')) togglePanel('side')            // R: aba Propriedades e resultados
       else if (e.key === ' ') { e.preventDefault(); spaceDown.current = true }
-      else if (e.key === 'Escape') { setWiring(null); setSel(null) }
+      else if (e.key === 'Escape') { setWiring(null); setSel(null); setPanMode(false) }
     }
     const onKeyUp = (e: KeyboardEvent) => { if (e.key === ' ') spaceDown.current = false }
     window.addEventListener('keydown', onKey)
@@ -705,7 +723,7 @@ export function SystemLabApp() {
   const onBgDown = (e: React.PointerEvent) => {
     capture(e)
     setWiring(null)
-    if (e.button === 1 || e.button === 2 || spaceDown.current) {
+    if (e.button === 1 || e.button === 2 || spaceDown.current || (panModeRef.current && e.button === 0)) {
       panStart.current = [e.clientX, e.clientY]
       panMoved.current = false
       drag.current = { mode: 'pan', sx: e.clientX, sy: e.clientY, tx: view.tx, ty: view.ty }
@@ -719,6 +737,7 @@ export function SystemLabApp() {
   }
   /** Ligação: seleciona e, ao arrastar, desloca o trecho mais próximo do ponteiro (desenho manual). */
   const onWireDown = (e: React.PointerEvent, w: Diagram['wires'][number]) => {
+    if (panModeRef.current) return
     e.stopPropagation()
     setSel({ type: 'wire', id: w.id })
     if (wiring) {                                           // ligação em andamento: encosta no trecho clicado
@@ -748,7 +767,7 @@ export function SystemLabApp() {
   const resetWire = (id: number) => setDg((d) => ({ ...d, wires: d.wires.map((w) => (w.id === id ? { ...w, via: undefined } : w)) }))
 
   const onElDown = (e: React.PointerEvent, el: El) => {
-    if (e.button !== 0) return
+    if (e.button !== 0 || panModeRef.current) return
     e.stopPropagation()
     const cur = sel?.type === 'el' ? sel.ids : []
     if (additive(e)) {                                     // Shift/Ctrl+clique: inclui ou retira da seleção
@@ -766,13 +785,13 @@ export function SystemLabApp() {
     drag.current = { mode: 'move', id: el.id, ox: wx - el.x, oy: wy - el.y, orig, vias }
   }
   const onBusEndDown = (e: React.PointerEvent, el: El, side: 'lo' | 'hi') => {
-    if (e.button !== 0) return
+    if (e.button !== 0 || panModeRef.current) return
     e.stopPropagation()
     capture(e)
     drag.current = { mode: 'busend', id: el.id, side, d0: dgRef.current }
   }
   const onPortDown = (e: React.PointerEvent, ref: PortRef) => {
-    if (e.button !== 0) return
+    if (e.button !== 0 || panModeRef.current) return
     e.stopPropagation()
     capture(e)
     if (wiring && !(wiring[0] === ref[0] && wiring[1] === ref[1])) {
@@ -982,6 +1001,16 @@ export function SystemLabApp() {
     return dg.els.find((x) => x.kind === 'line' && find(`${x.id}:2`) === mine) ?? null
   }, [dg, selEl])
   const fitView = () => setView({ tx: 40, ty: 40, k: 1 })
+  /** Zoom pelos botões: mantém fixo o centro da área de desenho (mesmos limites da roda do mouse). */
+  const zoomBy = (f: number) => {
+    const r = svgRef.current?.getBoundingClientRect()
+    setView((v) => {
+      const k = clamp(v.k * f, 0.3, 2.5)
+      const mx = r ? r.width / 2 : 0
+      const my = r ? r.height / 2 : 0
+      return { k, tx: mx - ((mx - v.tx) * k) / v.k, ty: my - ((my - v.ty) * k) / v.k }
+    })
+  }
   const clearAll = () => {
     if (dg.els.length === 0 || window.confirm('Apagar todo o diagrama?')) { setDg(emptyDiagram()); setSel(null); setWiring(null) }
   }
@@ -993,7 +1022,7 @@ export function SystemLabApp() {
     const payload = {
       format: EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(),
       settings: { sbase: cfg.sbase, pu: cfg.pu },
-      diagram: { els: dg.els, wires: dg.wires, nextId: dg.nextId },
+      diagram: { els: dg.els, wires: dg.wires, nextId: dg.nextId, title: dg.title || DEFAULT_TITLE, desc: dg.desc ?? "" },
     }
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
     const a = document.createElement('a')
@@ -1060,7 +1089,7 @@ export function SystemLabApp() {
     <div className="sl" style={{ ['--sl-l' as string]: panels.tools ? '180px' : '34px', ['--sl-r' as string]: panels.side ? '330px' : '34px' }}>
       {/* ---------------------------------------------------------- toolbox */}
       <aside className={`sl-tools ${panels.tools ? '' : 'collapsed'}`}>
-        <button className="sl-collapse" onClick={() => togglePanel('tools')} title={panels.tools ? 'Recolher elementos' : 'Expandir elementos'} aria-expanded={panels.tools}>
+        <button className="sl-collapse" onClick={() => togglePanel('tools')} title={panels.tools ? 'Recolher elementos (E)' : 'Expandir elementos (E)'} aria-expanded={panels.tools}>
           {panels.tools ? '◀' : '▶'}
         </button>
         {!panels.tools && <span className="sl-vlabel">Elementos</span>}
@@ -1088,6 +1117,7 @@ export function SystemLabApp() {
       {/* ---------------------------------------------------------- canvas */}
       <section className="sl-main">
         <div className="sl-bar">
+          <span className="sl-title" title={dg.desc ? `${dg.title ?? DEFAULT_TITLE}\n\n${dg.desc}` : 'Título da simulação (edite em ⚙ Configurações)'}>{dg.title || DEFAULT_TITLE}</span>
           <div className="sl-run">
             {run === 'playing'
               ? <button className="primary" onClick={pause} title="Pausa o tempo e os relés associados">⏸ Pause</button>
@@ -1101,9 +1131,15 @@ export function SystemLabApp() {
             <span className="clock" title="Tempo simulado">{simTime(prefs, simT)}</span>
             <span className={`chip-state ${run === 'playing' ? 'bk-closed' : ''}`}>{run === 'playing' ? 'EM EXECUÇÃO' : run === 'paused' ? 'PAUSADO' : 'PARADO'}</span>
           </div>
-          <button onClick={() => setDg(example())}>Carregar exemplo</button>
+          <button onClick={() => setDg((d) => ({ ...example(), title: d.title, desc: d.desc }))}>Carregar exemplo</button>
           <button onClick={clearAll}>Limpar tudo</button>
+          <span className="sl-zoom" role="group" aria-label="Zoom">
+            <button onClick={() => zoomBy(1 / 1.2)} disabled={view.k <= 0.3} title="Diminuir o zoom" aria-label="Diminuir o zoom">−</button>
+            <button onClick={() => zoomBy(1.2)} disabled={view.k >= 2.5} title="Aumentar o zoom" aria-label="Aumentar o zoom">+</button>
+          </span>
           <button onClick={fitView}>Centralizar vista</button>
+          <button className={`sl-pan ${panMode ? 'active' : ''}`} onClick={() => setPanMode((v) => !v)} aria-pressed={panMode}
+            title="Pan: arrasta a vista com o botão esquerdo (atalho P; Esc sai)"><span className="ic"><HandIcon /></span><span>Pan</span></button>
           <label className="check"><input type="checkbox" checked={showVals} onChange={(e) => setShowVals(e.target.checked)} /> Mostrar valores</label>
           <span className="spacer" />
           <button className="sl-gear" onClick={() => setShowCfg(true)} title="Configurações do SystemLab" aria-label="Configurações">⚙</button>
@@ -1111,7 +1147,7 @@ export function SystemLabApp() {
         </div>
         <svg
           ref={svgRef}
-          className={`sl-svg ${wiring ? 'wiring' : ''}`}
+          className={`sl-svg ${wiring ? 'wiring' : ''} ${panMode ? 'pan-mode' : ''}`}
           onPointerDown={onBgDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
@@ -1241,6 +1277,17 @@ export function SystemLabApp() {
           <div className="sl-modal" onPointerDown={(e) => { if (e.target === e.currentTarget) setShowCfg(false) }}>
             <div className="sl-modal-card" role="dialog" aria-label="Configurações">
               <div className="row"><h3>⚙ Configurações</h3><span className="spacer" /><button onClick={() => setShowCfg(false)}>Fechar</button></div>
+              <label className="sl-field col">
+                <span>Título da simulação</span>
+                <input className="numinput sl-wide" value={dg.title ?? DEFAULT_TITLE} placeholder={DEFAULT_TITLE} maxLength={120}
+                  onChange={(e) => { const t = e.target.value; setDg((d) => ({ ...d, title: t })) }}
+                  onBlur={() => { if (!(dg.title ?? '').trim()) setDg((d) => ({ ...d, title: DEFAULT_TITLE })) }} />
+              </label>
+              <label className="sl-field col">
+                <span>Descrição</span>
+                <textarea className="sl-textarea" rows={3} value={dg.desc ?? ''} maxLength={2000} placeholder="Opcional: objetivo, cenário, observações…"
+                  onChange={(e) => { const t = e.target.value; setDg((d) => ({ ...d, desc: t })) }} />
+              </label>
               <label className="sl-field">
                 <span>Potência de base (Sbase)</span>
                 <span><NumInput key={`sb-${cfg.sbase}`} value={cfg.sbase} onChange={(n) => saveCfg({ ...cfg, sbase: n > 0 ? n : DEFAULT_SBASE })} /> MVA</span>
@@ -1272,7 +1319,7 @@ export function SystemLabApp() {
 
       {/* ---------------------------------------------------------- propriedades */}
       <aside className={`sl-side ${panels.side ? '' : 'collapsed'}`}>
-        <button className="sl-collapse" onClick={() => togglePanel('side')} title={panels.side ? 'Recolher propriedades' : 'Expandir propriedades'} aria-expanded={panels.side}>
+        <button className="sl-collapse" onClick={() => togglePanel('side')} title={panels.side ? 'Recolher propriedades (R)' : 'Expandir propriedades (R)'} aria-expanded={panels.side}>
           {panels.side ? '▶' : '◀'}
         </button>
         {!panels.side ? <span className="sl-vlabel">Propriedades e resultados</span> : selEl ? (
@@ -1373,7 +1420,7 @@ export function SystemLabApp() {
                   <button className="primary" onClick={() => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, closed: !flag(x, 'closed') } }))} title="Abre ou fecha (também por duplo clique no símbolo)"><span className="ic"><SwitchIcon closed={!flag(selEl, 'closed')} /></span><span>{flag(selEl, 'closed') ? 'Abrir' : 'Fechar'}</span></button>
                 )}
                 {selEl.kind !== 'text' && <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title="Mostra ou oculta o nome e os dados deste elemento no diagrama"><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>}
-                {selEl.kind !== 'text' && <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (R)</span></button>}
+                {selEl.kind !== 'text' && <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (Shift+R)</span></button>}
                 <button className="danger" onClick={removeSel}><span className="ic"><TrashIcon /></span><span>Excluir</span></button>
               </div>
             </div>
@@ -1388,7 +1435,7 @@ export function SystemLabApp() {
               <button onClick={() => setHide(false)}>Mostrar nomes e dados</button>
             </div>
             <div className="row">
-              <button onClick={rotateSel}>↻ Girar cada um (R)</button>
+              <button onClick={rotateSel}>↻ Girar cada um (Shift+R)</button>
               <button className="danger" onClick={removeSel}>Excluir {selIds.size}</button>
             </div>
           </>

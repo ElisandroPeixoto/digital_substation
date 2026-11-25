@@ -55,7 +55,12 @@ export interface Diagram {
   els: El[]
   wires: Wire[]
   nextId: number
+  /** Título e descrição da simulação (configurações); sem título = DEFAULT_TITLE. */
+  title?: string
+  desc?: string
 }
+
+export const DEFAULT_TITLE = 'Sem título 1'
 
 export const GRID = 20
 

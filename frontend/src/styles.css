@@ -621,3 +621,27 @@ td.files { background: var(--soft); }
 
 /* Elemento Texto: caixa de edição na largura total do painel */
 .sl-field.col .sl-textarea { width: 100%; min-width: 0; box-sizing: border-box; min-height: 110px; resize: vertical; font: inherit; padding: 8px 10px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+
+/* SystemLab: ferramenta Pan (mão) */
+.sl-pan { display: inline-flex; align-items: center; gap: 6px; }
+.sl-pan .ic { display: inline-flex; }
+.sl-pan .ic svg { width: 16px; height: 16px; }
+.sl-pan.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.sl-svg.pan-mode, .sl-svg.pan-mode * { cursor: grab !important; }
+.sl-svg.pan-mode:active, .sl-svg.pan-mode:active * { cursor: grabbing !important; }
+
+/* SystemLab: título da simulação */
+.sl-title { font-weight: 600; color: var(--ink); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 6px; }
+.sl-field.col .sl-wide { width: 100%; box-sizing: border-box; }
+
+/* SystemLab: botões de zoom */
+.sl-zoom { display: inline-flex; }
+.sl-zoom button { min-width: 32px; font-size: 16px; font-weight: 700; padding-left: 0; padding-right: 0; }
+.sl-zoom button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.sl-zoom button:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+
+/* Home: ícones e nomes dos apps em 80 % do tamanho anterior (96 → 77 px, 16 → 12,8 px) */
+.ecl-app-img { width: 77px; height: 77px; }
+.ecl-app { width: 120px; gap: 6px; }
+.ecl-app b { font-size: 12.8px; }
+.ecl-apps { gap: 18px; }
