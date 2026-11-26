@@ -669,6 +669,14 @@ const srcGrounded = (e: El): boolean => flag(e, 'gnd')
  *  Modo 0: Ssc (MVA) e X1/R1 dão Z1; R0 = R1·(R0/R1) e X0 = X1·(X0/X1). Diagramas antigos com Z0/Z1 (z0r) continuam valendo.
  *  Modo 1: Isc trifásica (kA ∠θ3) e monofásica (kA ∠θ1) com E = Vnom/√3 ∠0°: Z1 = E / I3φ e Z0 = 3E / I1φ − 2·Z1. */
 export function sourceZ(e: El, vb: number): { z1: Cx; z0: Cx } {
+  // percentual da fonte (0 a 1000 %): escala o nível de curto-circuito; 100 % = parametrizado, 0 % = fonte sem contribuição
+  const pct = Math.min(1000, Math.max(e.p.pct == null ? 100 : num(e, 'pct'), 0)) / 100
+  if (pct <= 0) return { z1: cx(1e9, 0), z0: cx(1e9, 0) }
+  const z = sourceZ100(e, vb)
+  return { z1: mul(z.z1, cx(1 / pct)), z0: mul(z.z0, cx(1 / pct)) }
+}
+
+function sourceZ100(e: El, vb: number): { z1: Cx; z0: Cx } {
   const vkv = Math.max(num(e, 'vkv'), 1e-6)
   const tiny = (z: Cx) => (abs(z) < 1e-9 ? cx(1e-6, 0) : z)
   if (num(e, 'zmode') === 1) {

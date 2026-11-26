@@ -297,3 +297,9 @@ No **IED**, **TP (tensões)** alimenta VA/VB/VC do relé: TP trifásico entrega 
 **Modelo do IED:** o elemento IED tem o seletor de modelo (SEL-751, SEL-787 ou SEL-2440); a lista de relés mostra só os do modelo escolhido (trocar o modelo desassocia um relé de outro modelo). No SEL-787 o IED aceita até 3 TCs (W1, W2 e W3), que alimentam as correntes dos enrolamentos 1 a 3 do relé (injeção `ia_*`, `w2ia_*`, `w3ia_*`); o disjuntor monitorado continua sendo o do W1. O SEL-2440 não tem entradas analógicas, então só mostra a associação do relé, o IED 61850 e os atalhos.
 
 **Impedância da fonte CA:** campo "Impedância da fonte" escolhe o modo. (0) Potência de curto-circuito (MVA) e relações X1/R1, R0/R1 e X0/X1: Z1 = Vnom²/Ssc com ângulo de X1/R1; R0 = R1·(R0/R1), X0 = X1·(X0/X1). (1) Isc máx: Isc trifásica e monofásica em kA com ângulo (referência: tensão da fonte a 0°): Z1 = E/I3φ e Z0 = 3E/I1φ − 2·Z1, com E = Vnom/√3. Diagramas antigos com Z0/Z1 (z0r) continuam valendo (solver.sourceZ). A seq. zero só entra com o neutro aterrado.
+
+**TC e TP:** o diagrama mostra só a identificação do TP (3φ / 1φ X); as medições primária e secundária ficam na janela lateral.
+
+**Percentual da fonte** (`pct`, 0 a 1000 %): escala o nível de curto-circuito da fonte (Z1 e Z0 divididos por pct/100). 100 % = parametrizado; 0 % = fonte sem contribuição.
+
+**Medições do IED** (janela lateral): grandezas primárias lidas dos TCs/TPs ligados ao IED, com ou sem relé do DigitalRelay associado — correntes e tensões de fase, tensões de linha, componentes simétricas (I1, I2, I0, 3I0, V1, V2, V0), P/Q/S, FP, VS e, no SEL-787, W2/W3. O usuário escolhe os grupos exibidos (`El.mshow`). São calculadas pela mesma função (`iedAnalog`) que alimenta a injeção do relé associado, então os valores coincidem com os do DigitalRelay.

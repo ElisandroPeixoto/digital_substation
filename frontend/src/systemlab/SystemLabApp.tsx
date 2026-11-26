@@ -341,12 +341,11 @@ function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
       const main = r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])}` : 'desenergizado'
       return r.note ? [main, `⚠ ${r.note}`] : [main]
     }
-    case 'tc': if (r.extra.dc) return [`${fmt(r.extra.idc, 1)} A CC`]
-      return [r.energized ? `${fIm(r.i[0].mag, r.kvb?.[0])} → ${fmt(r.extra.isec, 3)} A` : 'desenergizado']
+    case 'tc': return []                                                // medições primária/secundária só na janela lateral
     case 'transformer': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'transformer3': return r.energized ? [`${fP(r.p[0])} · ${fmt(r.extra.loading, 0)}%`] : ['desenergizado']
     case 'line': return r.energized ? [`${fmt(r.extra.len, 1)} km · ${fIm(r.i[0].mag, r.kvb?.[0])}`] : [`${fmt(r.extra.len, 1)} km`]
-    case 'tp': return [r.energized ? `${tpTag(el)} · ${fmt(r.extra.vsec, 1)} V` : tpTag(el)]
+    case 'tp': return [tpTag(el)]                                       // medições primária/secundária só na janela lateral
     case 'fault': return flag(el, 'on') ? [`${FAULT_TYPES.find((t) => t.v === num(el, 'type'))?.short ?? ''}${r.extra.pos >= 0 ? ` @ ${fmt(r.extra.pos, 0)}%` : ''} · ${r.extra.ifault > 0 ? `${fIm(r.extra.ifault, r.kvb?.[0], 0)}` : 'sem corrente'}`] : ['desligada']
   }
 }
@@ -490,51 +489,10 @@ export function SystemLabApp() {
           if (dgc !== s.breaker_closed) updateEl(brk.id, (x) => ({ ...x, p: { ...x.p, closed: s.breaker_closed! } }))
         }
       } else { st.rel = undefined; st.diag = undefined }
-      const tc = L.tc != null ? elById.get(L.tc) : undefined
-      const tp = L.tp != null ? elById.get(L.tp) : undefined
-      const tps = L.tps != null ? elById.get(L.tps) : undefined               // TP de sincronismo: alimenta a entrada VS do relé
       const model = ied.model ?? s.model ?? '751'
       if (model === '2440') { st.sent = ''; continue }                           // SEL-2440: sem entradas analógicas
-      const tc2 = model === '787' && L.tc2 != null ? elById.get(L.tc2) : undefined       // SEL-787: enrolamentos 2 e 3
-      const tc3 = model === '787' && L.tc3 != null ? elById.get(L.tc3) : undefined
-      if (tc?.kind === 'tc' || tc2?.kind === 'tc' || tc3?.kind === 'tc' || tp?.kind === 'tp' || tps?.kind === 'tp') {
-        const patch: Record<string, number | boolean> = { analog_on: true }
-        // correntes de um TC em um enrolamento: prefixo '' = W1 (ia_mag…), 'w2' = W2 (w2ia_mag…)
-        const winding = (tcEl: El | undefined, pre: string) => {
-          if (tcEl?.kind !== 'tc') return
-          const r = sol.res.get(tcEl.id)
-          const ft = sol.fault?.terms.get(tcEl.id)?.[0]                          // em falta: fasores por fase
-          const mag = r?.energized ? r.i[0].mag : 0
-          const ang = r?.energized ? r.i[0].ang : 0
-          if (ft && r?.energized) {
-            Object.assign(patch, { [`${pre}ia_mag`]: ft.i.a.mag, [`${pre}ib_mag`]: ft.i.b.mag, [`${pre}ic_mag`]: ft.i.c.mag, [`${pre}ia_ang`]: ft.i.a.ang, [`${pre}ib_ang`]: ft.i.b.ang, [`${pre}ic_ang`]: ft.i.c.ang })
-          } else {
-            Object.assign(patch, { [`${pre}ia_mag`]: mag, [`${pre}ib_mag`]: mag, [`${pre}ic_mag`]: mag, [`${pre}ia_ang`]: ang, [`${pre}ib_ang`]: ang - 120, [`${pre}ic_ang`]: ang + 120 })
-          }
-        }
-        winding(tc, '')
-        winding(tc2, 'w2')
-        winding(tc3, 'w3')
-        const rv = tp?.kind === 'tp' ? sol.res.get(tp.id) : undefined
-        const fv = tp?.kind === 'tp' ? sol.fault?.terms.get(tp.id)?.[0] : undefined
-        if (tp?.kind === 'tp') {
-          const mag = rv?.energized ? (rv.v[0].mag * 1000) / Math.sqrt(3) : 0
-          const ang = rv?.energized ? rv.v[0].ang : 0
-          const mono = num(tp, 'phases') === 1
-          if (mono && rv?.energized) {                                          // TP monofásico: só a fase medida chega ao relé
-            const n = ['a', 'b', 'c'][tpPhase(tp)]
-            Object.assign(patch, { va_mag: 0, vb_mag: 0, vc_mag: 0, [`v${n}_mag`]: rv.extra.kvm * 1000, [`v${n}_ang`]: rv.extra.angm })
-          } else if (fv && rv?.energized) {
-            Object.assign(patch, { va_mag: fv.v.a.mag * 1000, vb_mag: fv.v.b.mag * 1000, vc_mag: fv.v.c.mag * 1000, va_ang: fv.v.a.ang, vb_ang: fv.v.b.ang, vc_ang: fv.v.c.ang })
-          } else {
-            Object.assign(patch, { va_mag: mag, vb_mag: mag, vc_mag: mag, va_ang: ang, vb_ang: ang - 120, vc_ang: ang + 120 })
-          }
-        }
-        if (tps?.kind === 'tp' && num(tps, 'phases') === 1) {                  // só TP monofásico alimenta o VS
-          const rs = sol.res.get(tps.id)
-          if (rs?.energized) Object.assign(patch, { vs_mag: rs.extra.kvm * 1000, vs_ang: rs.extra.angm })
-          else Object.assign(patch, { vs_mag: 0 })
-        }
+      const patch = iedAnalog(ied, model, elById, sol)
+      if (patch) {
         const key = JSON.stringify(patch, (_, v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : v))
         if (key !== st.sent || now - st.t > 5000) {
           st.sent = key; st.t = now
@@ -1345,7 +1303,7 @@ export function SystemLabApp() {
                 ) : (
                   <NumInput key={`${selEl.id}-${f.key}`} value={num(selEl, f.key)} onChange={(n) => (isBar(selEl.kind) && f.key === 'cells'
                     ? setDg((g) => resizeBus(g, selEl.id, n, 'hi'))
-                    : updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: f.min != null ? Math.max(f.min, n) : n } })))} />
+                    : updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: Math.min(f.max ?? Infinity, f.min != null ? Math.max(f.min, n) : n) } })))} />
                 )}
               </label>
             ))}
@@ -1388,8 +1346,8 @@ export function SystemLabApp() {
                     </select>
                   </label>
                 )}
-                {selEl.sid && iedModel(selEl) === '2440' && <p className="hint">O SEL-2440 não tem entradas analógicas: só as entradas/saídas digitais e os atalhos.</p>}
-                {selEl.sid && iedModel(selEl) !== '2440' && (
+                {iedModel(selEl) === '2440' && <p className="hint">O SEL-2440 não tem entradas analógicas: só as entradas/saídas digitais e os atalhos.</p>}
+                {iedModel(selEl) !== '2440' && (
                   <>
                     {([['breaker', iedModel(selEl) === '787' ? 'Disjuntor monitorado (W1)' : 'Disjuntor monitorado', 'breaker'],
                       ['tc', iedModel(selEl) === '787' ? 'TC do enrolamento 1 (W1)' : 'TC (correntes)', 'tc'],
@@ -1406,6 +1364,7 @@ export function SystemLabApp() {
                     ))}
                   </>
                 )}
+                <IedMeasurements el={selEl} model={iedModel(selEl)} patch={iedAnalog(selEl, iedModel(selEl), elById, sol)} onChange={(f) => updateEl(selEl.id, f)} />
                 {selEl.sid && sessions.some((x) => x.id === selEl.sid) && <ShortcutEditor key={selEl.id} el={selEl} onChange={(f) => updateEl(selEl.id, f)} />}
                 {sessions.length === 0 && <p className="hint">Nenhum relé ativo. Abra o DigitalRelay, carregue um .rdb e crie o relé; ele aparece aqui.</p>}
                 <p className="hint">Os IEDs associados a relés do mesmo projeto IEC61850 (aba IEC 61850 do DigitalRelay / app IEC61850) se comunicam por GOOSE automaticamente.</p>
@@ -1504,6 +1463,128 @@ function FaultPanel({ el, study, hasFault }: { el: El; study: FaultStudy | null;
   )
 }
 
+/** Grandezas analógicas que o IED lê do diagrama (valores PRIMÁRIOS: A e V fase-neutro), no mesmo formato da injeção do
+ *  DigitalRelay (`ia_mag`, `w2ia_mag`, `va_mag`, `vs_mag`…). É o que vai para o relé associado e o que a janela lateral mostra.
+ *  null = nenhum TC/TP ligado (ou SEL-2440, sem entradas analógicas). */
+function iedAnalog(ied: El, model: string, elById: Map<number, El>, sol: ReturnType<typeof solve>): Record<string, number | boolean> | null {
+  if (model === '2440') return null
+  const L = ied.links ?? {}
+  const tc = L.tc != null ? elById.get(L.tc) : undefined
+  const tp = L.tp != null ? elById.get(L.tp) : undefined
+  const tps = L.tps != null ? elById.get(L.tps) : undefined               // TP de sincronismo: alimenta a entrada VS do relé
+  const tc2 = model === '787' && L.tc2 != null ? elById.get(L.tc2) : undefined       // SEL-787: enrolamentos 2 e 3
+  const tc3 = model === '787' && L.tc3 != null ? elById.get(L.tc3) : undefined
+  if (!(tc?.kind === 'tc' || tc2?.kind === 'tc' || tc3?.kind === 'tc' || tp?.kind === 'tp' || tps?.kind === 'tp')) return null
+  const patch: Record<string, number | boolean> = { analog_on: true }
+  // correntes de um TC em um enrolamento: prefixo '' = W1 (ia_mag…), 'w2' = W2 (w2ia_mag…)
+  const winding = (tcEl: El | undefined, pre: string) => {
+    if (tcEl?.kind !== 'tc') return
+    const r = sol.res.get(tcEl.id)
+    const ft = sol.fault?.terms.get(tcEl.id)?.[0]                          // em falta: fasores por fase
+    const mag = r?.energized ? r.i[0].mag : 0
+    const ang = r?.energized ? r.i[0].ang : 0
+    if (ft && r?.energized) {
+      Object.assign(patch, { [`${pre}ia_mag`]: ft.i.a.mag, [`${pre}ib_mag`]: ft.i.b.mag, [`${pre}ic_mag`]: ft.i.c.mag, [`${pre}ia_ang`]: ft.i.a.ang, [`${pre}ib_ang`]: ft.i.b.ang, [`${pre}ic_ang`]: ft.i.c.ang })
+    } else {
+      Object.assign(patch, { [`${pre}ia_mag`]: mag, [`${pre}ib_mag`]: mag, [`${pre}ic_mag`]: mag, [`${pre}ia_ang`]: ang, [`${pre}ib_ang`]: ang - 120, [`${pre}ic_ang`]: ang + 120 })
+    }
+  }
+  winding(tc, '')
+  winding(tc2, 'w2')
+  winding(tc3, 'w3')
+  const rv = tp?.kind === 'tp' ? sol.res.get(tp.id) : undefined
+  const fv = tp?.kind === 'tp' ? sol.fault?.terms.get(tp.id)?.[0] : undefined
+  if (tp?.kind === 'tp') {
+    const mag = rv?.energized ? (rv.v[0].mag * 1000) / Math.sqrt(3) : 0
+    const ang = rv?.energized ? rv.v[0].ang : 0
+    const mono = num(tp, 'phases') === 1
+    if (mono && rv?.energized) {                                          // TP monofásico: só a fase medida chega ao relé
+      const n = ['a', 'b', 'c'][tpPhase(tp)]
+      Object.assign(patch, { va_mag: 0, vb_mag: 0, vc_mag: 0, va_ang: 0, vb_ang: -120, vc_ang: 120, [`v${n}_mag`]: rv.extra.kvm * 1000, [`v${n}_ang`]: rv.extra.angm })
+    } else if (fv && rv?.energized) {
+      Object.assign(patch, { va_mag: fv.v.a.mag * 1000, vb_mag: fv.v.b.mag * 1000, vc_mag: fv.v.c.mag * 1000, va_ang: fv.v.a.ang, vb_ang: fv.v.b.ang, vc_ang: fv.v.c.ang })
+    } else {
+      Object.assign(patch, { va_mag: mag, vb_mag: mag, vc_mag: mag, va_ang: ang, vb_ang: ang - 120, vc_ang: ang + 120 })
+    }
+  }
+  if (tps?.kind === 'tp' && num(tps, 'phases') === 1) {                  // só TP monofásico alimenta o VS
+    const rs = sol.res.get(tps.id)
+    if (rs?.energized) Object.assign(patch, { vs_mag: rs.extra.kvm * 1000, vs_ang: rs.extra.angm })
+    else Object.assign(patch, { vs_mag: 0, vs_ang: 0 })
+  }
+  return patch
+}
+
+/** Grupos de medição do IED na janela lateral (o usuário escolhe quais exibir). */
+const IED_MEAS: { k: string; l: string }[] = [
+  { k: 'i', l: 'Correntes de fase' }, { k: 'v', l: 'Tensões fase-neutro' }, { k: 'vll', l: 'Tensões de linha' },
+  { k: 'seqi', l: 'Componentes simétricas – corrente' }, { k: 'seqv', l: 'Componentes simétricas – tensão' },
+  { k: 'pq', l: 'Potências (P, Q, S)' }, { k: 'fp', l: 'Fator de potência' }, { k: 'vs', l: 'Tensão de sincronismo (VS)' },
+  { k: 'w23', l: 'Correntes dos enrolamentos W2/W3 (SEL-787)' },
+]
+const IED_MEAS_DEFAULT = ['i', 'v', 'seqi', 'seqv', 'pq', 'fp']
+
+type C = { re: number; im: number }
+const cP = (mag: number, deg: number): C => ({ re: mag * Math.cos((deg * Math.PI) / 180), im: mag * Math.sin((deg * Math.PI) / 180) })
+const cAdd = (...z: C[]): C => z.reduce((a, b) => ({ re: a.re + b.re, im: a.im + b.im }), { re: 0, im: 0 })
+const cMul = (a: C, b: C): C => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re })
+const cAbs = (z: C) => Math.hypot(z.re, z.im)
+const cDeg = (z: C) => (cAbs(z) < 1e-9 ? 0 : (Math.atan2(z.im, z.re) * 180) / Math.PI)
+const A1: C = cP(1, 120)
+const A2: C = cP(1, 240)
+/** Componentes simétricas (0, 1, 2) de um trio de fasores A, B, C. */
+const seq3 = (a: C, b: C, c: C): [C, C, C] => {
+  const k = (z: C): C => ({ re: z.re / 3, im: z.im / 3 })
+  return [k(cAdd(a, b, c)), k(cAdd(a, cMul(A1, b), cMul(A2, c))), k(cAdd(a, cMul(A2, b), cMul(A1, c)))]
+}
+
+/** Medições que o IED está lendo (primárias, como no DigitalRelay), com escolha dos grupos exibidos. */
+function IedMeasurements({ el, patch, model, onChange }: { el: El; patch: Record<string, number | boolean> | null; model: string; onChange: (f: (e: El) => El) => void }) {
+  const show = el.mshow ?? IED_MEAS_DEFAULT
+  const toggle = (k: string) => onChange((x) => {
+    const cur = x.mshow ?? IED_MEAS_DEFAULT
+    return { ...x, mshow: cur.includes(k) ? cur.filter((y) => y !== k) : [...cur, k] }
+  })
+  const g = (k: string) => (patch && typeof patch[k] === 'number' ? (patch[k] as number) : 0)
+  const ph = (pre: string, kind: 'i' | 'v') => (['a', 'b', 'c'] as const).map((p) => cP(g(`${pre}${kind}${p}_mag`), g(`${pre}${kind}${p}_ang`)))
+  const I = ph('', 'i')
+  const V = ph('', 'v')
+  const hasI = !!patch && 'ia_mag' in patch
+  const hasV = !!patch && 'va_mag' in patch
+  const fA = (z: C) => `${fmt(cAbs(z), 1)} A ∠${fmt(cDeg(z), 1)}°`
+  const fKV = (z: C) => `${fmt(cAbs(z) / 1000, 3)} kV ∠${fmt(cDeg(z), 1)}°`
+  const S = cAdd(...[0, 1, 2].map((k) => cMul(V[k], { re: I[k].re, im: -I[k].im })))       // V·I* (VA, fase-neutro × fase)
+  const P = S.re / 1e6
+  const Q = S.im / 1e6
+  const Sabs = Math.hypot(P, Q)
+  const rows: [string, string][] = []
+  const opts = IED_MEAS.filter((m) => (m.k === 'w23' ? model === '787' : true))
+  if (show.includes('i') && hasI) (['A', 'B', 'C'] as const).forEach((n, k) => rows.push([`I${n}`, fA(I[k])]))
+  if (show.includes('v') && hasV) (['A', 'B', 'C'] as const).forEach((n, k) => rows.push([`V${n}`, fKV(V[k])]))
+  if (show.includes('vll') && hasV) [['VAB', 0, 1], ['VBC', 1, 2], ['VCA', 2, 0]].forEach(([n, a, b]) => rows.push([n as string, fKV(cAdd(V[a as number], { re: -V[b as number].re, im: -V[b as number].im }))]))
+  if (show.includes('seqi') && hasI) { const [i0, i1, i2] = seq3(I[0], I[1], I[2]); rows.push(['I1', fA(i1)], ['I2', fA(i2)], ['I0', fA(i0)], ['3I0 (residual)', fA({ re: 3 * i0.re, im: 3 * i0.im })]) }
+  if (show.includes('seqv') && hasV) { const [v0, v1, v2] = seq3(V[0], V[1], V[2]); rows.push(['V1', fKV(v1)], ['V2', fKV(v2)], ['V0', fKV(v0)]) }
+  if (show.includes('pq') && hasI && hasV) rows.push(['P', `${fmt(P, 3)} MW`], ['Q', `${fmt(Q, 3)} Mvar`], ['S', `${fmt(Sabs, 3)} MVA`])
+  if (show.includes('fp') && hasI && hasV) rows.push(['FP', Sabs > 1e-9 ? `${fmt(Math.abs(P) / Sabs, 3)} ${Q >= 0 ? '(indutivo)' : '(capacitivo)'}` : '–'])
+  if (show.includes('vs') && patch && 'vs_mag' in patch) rows.push(['VS', fKV(cP(g('vs_mag'), g('vs_ang')))])
+  if (show.includes('w23') && model === '787') for (const w of ['w2', 'w3']) if (patch && `${w}ia_mag` in patch) ph(w, 'i').forEach((z, k) => rows.push([`I${'ABC'[k]} (${w.toUpperCase()})`, fA(z)]))
+  return (
+    <div className="sl-results">
+      <h4>Medições do IED (primário)</h4>
+      {!patch ? <p className="hint">{model === '2440' ? 'O SEL-2440 não tem entradas analógicas.' : 'Ligue um TC e/ou um TP ao IED (acima) para ver as medições.'}</p> : (
+        <table className="tbl meas"><tbody>{rows.map(([k, v]) => <tr key={k}><td>{k}</td><td className="num">{v}</td></tr>)}</tbody></table>
+      )}
+      <details className="sl-mpick">
+        <summary>Medições exibidas</summary>
+        {opts.map((m) => (
+          <label key={m.k} className="chk"><input type="checkbox" checked={show.includes(m.k)} onChange={() => toggle(m.k)} /> {m.l}</label>
+        ))}
+      </details>
+      <p className="hint">Valores primários lidos dos TCs/TPs ligados ao IED (mesmo sem relé do DigitalRelay associado). Com relé associado, são os mesmos enviados à injeção do DigitalRelay. P/Q positivos no sentido da polaridade do TC.</p>
+    </div>
+  )
+}
+
 function Results({ el, r }: { el: El; r: ElResult | undefined }) {
   if (!r || el.kind === 'fault' || (el.kind === 'switch' && !r.note)) return null
   if (r.extra.dc) {
@@ -1579,10 +1660,22 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
           ))}
         </tbody>
       </table>
-      {el.kind === 'tp' && <p className="hint">TP {num(el, 'phases') === 1 ? `monofásico, fase ${TP_PHASES[tpPhase(el)]}` : 'trifásico'}. Tensão secundária: <b>{fmt(r.extra.vsec, 2)} V</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
+      {el.kind === 'tp' && (
+        <table className="tbl meas sl-ps"><tbody>
+          <tr><td>Tipo</td><td className="num">{num(el, 'phases') === 1 ? `monofásico, fase ${TP_PHASES[tpPhase(el)]}` : 'trifásico'} · relação {fmt(r.extra.ratio, 1)}:1</td></tr>
+          <tr><td>Tensão primária</td><td className="num">{r.energized ? (num(el, 'phases') === 1 ? `${fmt(r.extra.kvm, 3)} kV ∠${fmt(r.extra.angm, 1)}° (fase-neutro)` : fV(r.v[0], r.kvb?.[0], 3)) : '–'}</td></tr>
+          <tr><td>Tensão secundária</td><td className="num">{r.energized ? `${fmt(r.extra.vsec, 2)} V` : '–'}</td></tr>
+        </tbody></table>
+      )}
       {el.kind === 'transformer3' && <p className="hint">Terminais: 1 = P (primário), 2 = S (secundário), 3 = T (terciário). Carregamento de P: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fP(r.extra.loss, 3)}</b></p>}
       {el.kind === 'line' && <p className="hint">Impedância total (seq. +): <b>{fmt(r.extra.rt, 3)} + j{fmt(r.extra.xt, 3)} Ω</b> · comprimento {fmt(r.extra.len, 1)} km · perdas {fP(r.extra.loss, 3)}</p>}
-      {el.kind === 'tc' && <p className="hint">Corrente secundária: <b>{fmt(r.extra.isec, 3)} A</b> (relação {fmt(r.extra.ratio, 1)}:1)</p>}
+      {el.kind === 'tc' && (
+        <table className="tbl meas sl-ps"><tbody>
+          <tr><td>Relação</td><td className="num">{fmt(r.extra.ratio, 1)}:1</td></tr>
+          <tr><td>Corrente primária</td><td className="num">{r.energized ? fI(r.i[0], r.kvb?.[0]) : '–'}</td></tr>
+          <tr><td>Corrente secundária</td><td className="num">{r.energized ? `${fmt(r.extra.isec, 3)} A` : '–'}</td></tr>
+        </tbody></table>
+      )}
       {el.kind === 'transformer' && <p className="hint">Carregamento: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fP(r.extra.loss, 3)}</b></p>}
       <p className="hint">Em elementos de dois terminais, as grandezas são positivas entrando no elemento; o fluxo 1→2 é a P do terminal 1.</p>
     </div>

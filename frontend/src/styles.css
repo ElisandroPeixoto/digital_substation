@@ -693,3 +693,9 @@ fieldset.inj-lock { border: 0; margin: 0; padding: 0; min-width: 0; }
 fieldset.inj-lock:disabled { opacity: .55; }
 button.tag-btn { cursor: pointer; border: 0; font: inherit; }
 button.tag-btn:hover { text-decoration: line-through; }
+
+/* SystemLab: escolha das medições do IED */
+.sl-mpick { margin: 6px 0; font-size: 12px; }
+.sl-mpick summary { cursor: pointer; color: var(--accent); }
+.sl-mpick .chk { display: block; margin: 3px 0; }
+.sl-ps { margin-top: 6px; }

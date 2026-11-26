@@ -27,6 +27,8 @@ export interface El {
   model?: string
   /** IED: atalhos exibidos no painel flutuante, posição do painel (px no canvas) e se está expandido. */
   sc?: Shortcut[]
+  /** IED: grupos de medição exibidos na janela lateral (ver IED_MEAS). */
+  mshow?: string[]
   /** Elemento Texto: conteúdo (várias linhas separadas por \n). */
   text?: string
   scPos?: { x: number; y: number }
@@ -70,6 +72,7 @@ export interface Field {
   unit?: string
   type: 'number' | 'bool' | 'select'
   min?: number
+  max?: number
   /** type 'select': valor numérico guardado → rótulo. */
   options?: { v: number; l: string }[]
   /** Mostra o campo só quando o parâmetro `key` vale `v` (ex.: modo de impedância da fonte). */
@@ -135,11 +138,12 @@ export const KINDS: Record<Kind, KindInfo> = {
   source: {
     label: 'Fonte',
     prefix: 'G',
-    defaults: { vkv: 69, ang: 0, zmode: 0, ssc: 500, xr: 10, r0r1: 1, x0x1: 1, isc3: 4, isc3ang: -85, isc1: 3, isc1ang: -80, gnd: true },
+    defaults: { vkv: 69, ang: 0, pct: 100, zmode: 0, ssc: 500, xr: 10, r0r1: 1, x0x1: 1, isc3: 4, isc3ang: -85, isc1: 3, isc1ang: -80, gnd: true },
     fields: [
       { key: 'vkv', label: 'Tensão nominal (fase-fase)', unit: 'kV', type: 'number', min: 0 },
       { key: 'ang', label: 'Ângulo da tensão', unit: '°', type: 'number' },
       { key: 'gnd', label: 'Neutro aterrado', type: 'bool' },
+      { key: 'pct', label: 'Percentual da fonte (0 a 1000 %; 100 % = parametrizado)', unit: '%', type: 'number', min: 0, max: 1000 },
       { key: 'zmode', label: 'Impedância da fonte', type: 'select', options: [{ v: 0, l: 'Potência de curto e relações X/R' }, { v: 1, l: 'Isc máx (trifásica e monofásica)' }] },
       { key: 'ssc', label: 'Potência de curto-circuito', unit: 'MVA', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
       { key: 'xr', label: 'X1/R1', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
