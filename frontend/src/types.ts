@@ -284,7 +284,7 @@ export interface DnpData {
   map: number
   maps: number[]
   bo: { index: number; name: string; desc: string }[]
-  bi: { index: number; name: string; desc: string; value: number | null; changed: number | null; changed_w?: number | null }[]
+  bi: { index: number; name: string; desc: string; value: number | null; changed: number | null; changed_w?: number | null; t0?: string; t1?: string }[]   // t0/t1: textos do ALIAS
   ai: {
     index: number
     name: string

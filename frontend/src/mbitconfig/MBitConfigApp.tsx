@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { AppMark } from '../eclipse/AppMark'
 import { api } from '../api'
 import { usePoll } from '../hooks'
 import type { MbLinkS, MbPortInfo, MbRelay, MbStatus } from '../types'
@@ -209,7 +210,7 @@ export function MBitConfigApp() {
   return (
     <div className="app mb">
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">⚡</span><div><b>MBitConfig</b><small>Links Mirrored Bits entre os relés do DigitalRelay</small></div></div>
+        <div className="brand"><AppMark id="mbitconfig" /><div><b>MBitConfig</b><small>Links Mirrored Bits entre os relés do DigitalRelay</small></div></div>
         <div className="controls">
           <span className="muted">{relays.length} relé(s) · {links.length} link(s)</span>
         </div>

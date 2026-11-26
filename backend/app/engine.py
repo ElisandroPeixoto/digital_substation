@@ -169,6 +169,7 @@ class RelayEngine:
         self.n_off = 0
         self.ser_log: deque[dict] = deque(maxlen=3000)
         self.ser_seq = 0
+        self.ser_epoch = 0                 # incrementado a cada limpeza do SER (numeração recomeça em 1)
         self._ser_prev: dict[str, float] = {}
         self.fault_cur = {"FIA": 0.0, "FIB": 0.0, "FIC": 0.0, "FIG": 0.0, "FIN": 0.0, "FLOC": 0.0}
         self.trip_rose = False
@@ -1077,6 +1078,12 @@ class RelayEngine:
             out.append({"name": k, "label": e.comment, "value": self.b(k), "role": role})
         return out
 
+    def clear_ser(self) -> None:
+        """Apaga o SER e reinicia a numeração: o próximo evento volta a ser o nº 1 (``ser_epoch`` avisa os clientes)."""
+        self.ser_log.clear()
+        self.ser_seq = 0
+        self.ser_epoch += 1
+
     def snapshot_ser(self, since: int = 0) -> dict:
         events = [e for e in self.ser_log if e["seq"] > since]
-        return {"events": events[-500:], "last_seq": self.ser_seq}
+        return {"events": events[-500:], "last_seq": self.ser_seq, "epoch": self.ser_epoch}

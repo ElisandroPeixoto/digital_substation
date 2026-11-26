@@ -139,6 +139,21 @@ async def upload_rdb(file: UploadFile = File(...)) -> dict:
     return {"upload_id": uid, **archive.summary()}
 
 
+@app.post("/api/scada/map/{sid}")
+async def scada_map(sid: str, file: UploadFile = File(...)) -> dict:
+    """App SCADA: lê a planilha de mapa do relé (.xlsx/.csv) e cruza com o mapa DNP3 ativo (tipo + wordbit)."""
+    from .scada import MAX_BYTES, MapError, match_map, parse_map
+
+    s = _session(sid)
+    data = await file.read(MAX_BYTES + 1)
+    try:
+        rows = await run_in_threadpool(parse_map, data, file.filename or "mapa.xlsx")
+    except MapError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    res = match_map(rows, s.engine.dnp)
+    return {"relay_id": s.relay.id, "device": s.engine.device_name, "map": s.engine.dnp.map_id, "filename": file.filename, **res}
+
+
 @app.get("/api/uploads/{uid}")
 async def get_upload(uid: str) -> dict:
     return {"upload_id": uid, **_archive(uid).summary()}
@@ -244,11 +259,15 @@ async def import_session(body: dict) -> dict:
         raise HTTPException(400, "JSON inválido: faltam os arquivos do ajuste (original_files).")
     relay_id = str(body.get("relay_id") or "IED importado")[:64]
     relay = RdbRelay(id=relay_id, name=str(body.get("relay_name") or body.get("device") or relay_id)[:120], files=dict(files))
+    alias = str(body.get("device") or "").strip()[:80]
     try:
         sess = manager.create(relay, str(body.get("filename") or "importado.json")[:200])
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, f"Ajustes inválidos: {exc}") from exc
     eng = sess.engine
+    if alias and alias != relay.name:                 # IED renomeado antes de exportar
+        sess.alias = alias
+        eng.device_name = alias
     warnings: list[str] = []
     # 1) ajustes alterados no simulador (valores atuais do JSON para os pares listados em "modified")
     settings = body.get("settings") if isinstance(body.get("settings"), dict) else {}
@@ -301,6 +320,20 @@ async def import_session(body: dict) -> dict:
     info["ied"] = manager.net.bindings.get(sess.id)
     info["warnings"] = warnings
     return info
+
+
+class RenameBody(BaseModel):
+    name: str
+
+
+@app.patch("/api/sessions/{sid}")
+async def rename_session(sid: str, body: RenameBody) -> dict:
+    """Renomeia o IED (nome exibido no DigitalRelay, SCADA, SystemLab, IEC61850…). Nome vazio volta ao nome do ajuste no .rdb."""
+    s = _session(sid)
+    name = re.sub(r"[\x00-\x1f\x7f]", "", body.name).strip()[:80]
+    s.alias = name or None
+    s.engine.device_name = name or s.relay.name
+    return {"device": s.engine.device_name}
 
 
 @app.delete("/api/sessions/{sid}")
@@ -555,7 +588,7 @@ async def get_ser(sid: str, since: int = 0) -> dict:
 
 @app.delete("/api/sessions/{sid}/ser")
 async def clear_ser(sid: str) -> dict:
-    _session(sid).engine.ser_log.clear()
+    _session(sid).engine.clear_ser()
     return {"ok": True}
 
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { AppMark } from '../eclipse/AppMark'
 import { api } from '../api'
 import { usePoll } from '../hooks'
 import { GooseGraph } from './GooseGraph'
@@ -161,7 +162,7 @@ export function IEC61850App() {
   return (
     <div className="app iec">
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">⚡</span><div><b>IEC61850</b><small>{empty ? 'Carregue arquivos .scd / .cid / .icd' : project.files.join(' · ')}</small></div></div>
+        <div className="brand"><AppMark id="iec61850" /><div><b>IEC61850</b><small>{empty ? 'Carregue arquivos .scd / .cid / .icd' : project.files.join(' · ')}</small></div></div>
       </header>
       <main>
         {/* mesmo padrão da tela de carga do DigitalRelay: barra com "Adicionar arquivo(s)" e, abaixo, o cartão "Nenhum arquivo carregado" */}

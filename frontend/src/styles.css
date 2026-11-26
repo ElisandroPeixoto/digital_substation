@@ -705,3 +705,32 @@ button.tag-btn:hover { text-decoration: line-through; }
 .sl-txtbar button { display: inline-flex; align-items: center; justify-content: center; padding: 4px 6px; min-width: 30px; }
 .sl-txtbar button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 .sl-txtbar .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+
+/* App SCADA */
+.scada main { display: flex; flex-direction: column; gap: 12px; }
+.scada .tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.scada .tabs .search { max-width: 260px; }
+.scada-scroll { max-height: 52vh; overflow: auto; }
+.scada-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.scada-rej { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; max-height: 260px; overflow: auto; }
+
+/* SCADA: eventos em tela cheia e destaque dos eventos que vão para 1 */
+.scada-view { display: flex; flex-direction: column; gap: 12px; }
+.scada-view.full { position: fixed; inset: 0; z-index: 60; background: var(--bg); padding: 12px 16px; overflow: auto; }
+.scada-view.full .scada-scroll { max-height: calc(100vh - 170px); }
+.scada-view:fullscreen { background: var(--bg); padding: 12px 16px; overflow: auto; }
+.scada-full-title { font-family: 'Montserrat', sans-serif; margin-right: 8px; }
+tr.scada-on td { background: color-mix(in srgb, var(--accent-2) 16%, transparent); }
+tr.scada-on td:first-child { box-shadow: inset 3px 0 0 var(--accent-2); }
+.scada-state { display: inline-block; padding: 1px 8px; border-radius: 10px; font-weight: 700; }
+.scada-state.on { background: var(--accent-2); color: var(--bg); }
+.scada-state.off { color: var(--muted); border: 1px solid var(--line); font-weight: 600; }
+
+/* SCADA: filtro por período e ordenação pela data/hora */
+.scada-period { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+.scada-period input { width: 200px; }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--accent); }
+
+/* Cabeçalho dos apps: ícone do app (o mesmo da Home) */
+.brand-icon { width: 36px; height: 36px; display: block; flex: none; }

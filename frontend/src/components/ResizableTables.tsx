@@ -52,11 +52,13 @@ export function ResizableTables({ id, className, children }: { id: string; class
         }
         ths.forEach((th, ci) => {
           if (th.querySelector(':scope > .col-grip')) return
-          th.style.position = 'relative'
+          if (getComputedStyle(th).position === 'static') th.style.position = 'relative'   // mantém cabeçalhos fixos (sticky)
           const grip = document.createElement('span')
           grip.className = 'col-grip'
           grip.title = 'Arraste para redimensionar (duplo clique: automático)'
-          grip.addEventListener('dblclick', () => {
+          grip.addEventListener('click', (e) => e.stopPropagation())
+          grip.addEventListener('dblclick', (e) => {
+            e.stopPropagation()
             table.style.tableLayout = ''
             table.style.width = ''
             table.querySelectorAll<HTMLTableCellElement>('thead th').forEach((h) => (h.style.width = ''))

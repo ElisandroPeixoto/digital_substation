@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { APPS } from './apps'
 import { useTheme } from './theme'
 
-export type Route = 'home' | 'about' | 'digitalrelay' | 'phaseengine' | 'systemlab' | 'overcurrent' | 'iec61850' | 'mbitconfig'
+export type Route = 'home' | 'about' | 'digitalrelay' | 'phaseengine' | 'systemlab' | 'overcurrent' | 'iec61850' | 'mbitconfig' | 'scada'
 
 /** Nome exibido no header para a rota atual. */
 function routeTitle(route: Route): string {

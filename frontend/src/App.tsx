@@ -8,6 +8,7 @@ import { InjectionWindow } from './components/InjectionWindow'
 import { PhaseEngineApp } from './phaseengine/PhaseEngineApp'
 import { SystemLabApp } from './systemlab/SystemLabApp'
 import { IEC61850App } from './iec61850/IEC61850App'
+import { ScadaApp } from './scada/ScadaApp'
 import { MBitConfigApp } from './mbitconfig/MBitConfigApp'
 import { OvercurrentApp } from './overcurrent/OvercurrentApp'
 import { PrefsProvider } from './prefs'
@@ -43,25 +44,47 @@ function readLocal(key: string): unknown {
 
 /** Exporta o IED simulado: ajustes (com as edições), arquivos originais e estado vindos do backend, mais o que só existe no
  *  navegador — textos personalizados (entradas, saídas, VB/RB/CB) e títulos dos botões do frontal. */
+async function buildExport(sid: string, relayId: string) {
+  const data = await api.exportSession(sid)
+  return {
+    ...data,
+    exported_at: new Date().toISOString(),
+    front_panel: {
+      texts: readLocal(`sel751.texts.${relayId}`) ?? {},           // textos ajustados (aba Textos / frontal)
+      pb_titles: readLocal(`sel751.pbtitles.${relayId}`),          // textos centrais dos botões PB1–PB8 (null = padrão)
+    },
+  }
+}
+
+function download(obj: unknown, name: string) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `${name.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'ied'}.json`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+}
+
 async function exportRelay(sid: string, relayId: string, device: string) {
   try {
-    const data = await api.exportSession(sid)
-    const out = {
-      ...data,
-      exported_at: new Date().toISOString(),
-      front_panel: {
-        texts: readLocal(`sel751.texts.${relayId}`) ?? {},           // textos ajustados (aba Textos / frontal)
-        pb_titles: readLocal(`sel751.pbtitles.${relayId}`),          // textos centrais dos botões PB1–PB8 (null = padrão)
-      },
-    }
-    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `${(device || relayId).replace(/[\\/:*?"<>|]+/g, '_').trim() || 'ied'}.json`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+    download(await buildExport(sid, relayId), device || relayId)
+  } catch (e) {
+    window.alert('Falha ao exportar: ' + (e instanceof Error ? e.message : String(e)))
+  }
+}
+
+const BUNDLE_FORMAT = 'eclipse-digitalrelay-bundle'
+
+/** Exporta todos os relés em execução no DigitalRelay num único JSON (um item por relé, no mesmo formato da exportação individual). */
+async function exportAllRelays() {
+  try {
+    const all = await api.sessions()
+    if (all.length === 0) { window.alert('Nenhum relé em execução para exportar.'); return }
+    const relays = []
+    for (const s of all) relays.push(await buildExport(s.id, s.relay_id))
+    download({ format: BUNDLE_FORMAT, version: 1, exported_at: new Date().toISOString(), relays }, `digitalrelay-${all.length}-reles-${new Date().toISOString().slice(0, 10)}`)
   } catch (e) {
     window.alert('Falha ao exportar: ' + (e instanceof Error ? e.message : String(e)))
   }
@@ -181,22 +204,33 @@ function DigitalRelayApp() {
     setBusy(true)
     setError(null)
     try {
-      let data: { front_panel?: { texts?: unknown; pb_titles?: unknown } }
+      type Item = { front_panel?: { texts?: unknown; pb_titles?: unknown }; format?: string; relays?: Item[]; device?: string }
+      let data: Item
       try { data = JSON.parse(await file.text()) } catch { throw new Error('O arquivo não é um JSON válido.') }
-      const s = await api.importSession(data)
-      const fp = data.front_panel
-      try {
-        if (fp?.texts && typeof fp.texts === 'object') localStorage.setItem(`sel751.texts.${s.relay_id}`, JSON.stringify(fp.texts))
-        if (Array.isArray(fp?.pb_titles) && fp.pb_titles.length === 8) localStorage.setItem(`sel751.pbtitles.${s.relay_id}`, JSON.stringify(fp.pb_titles))
-      } catch { /* armazenamento indisponível */ }
-      const next = [...list, s]
+      // pacote com vários relés (Exportar todos) ou um relé só
+      const items: Item[] = data.format === BUNDLE_FORMAT ? (Array.isArray(data.relays) ? data.relays : []) : [data]
+      if (items.length === 0) throw new Error('O pacote não contém relés.')
+      const made: SessionInfo[] = []
+      const warns: string[] = []
+      for (const it of items) {
+        const s = await api.importSession(it)
+        const fp = it.front_panel
+        try {
+          if (fp?.texts && typeof fp.texts === 'object') localStorage.setItem(`sel751.texts.${s.relay_id}`, JSON.stringify(fp.texts))
+          if (Array.isArray(fp?.pb_titles) && fp.pb_titles.length === 8) localStorage.setItem(`sel751.pbtitles.${s.relay_id}`, JSON.stringify(fp.pb_titles))
+        } catch { /* armazenamento indisponível */ }
+        made.push(s)
+        for (const w of s.warnings ?? []) warns.push(`${s.device}: ${w}`)
+      }
+      const s = made[made.length - 1]
+      const next = [...list, ...made]
       setList(next)
       setAdding(false)
       setInfo(s)
       setView('sim')
       setTab('panel')
       save({ sid: s.id, uid: uploads[uploads.length - 1]?.upload_id, uids: uidsOf(uploads), sids: next.map((x) => x.id) })
-      if (s.warnings?.length) window.alert('IED importado com avisos:\n- ' + s.warnings.join('\n- '))
+      if (warns.length) window.alert(`${made.length} relé(s) importado(s) com avisos:\n- ` + warns.join('\n- '))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -206,6 +240,18 @@ function DigitalRelayApp() {
 
   const select = (s: SessionInfo) => { setInfo(s); setView('sim'); save({ sid: s.id, uid: uploads[uploads.length - 1]?.upload_id, uids: uidsOf(uploads), sids: list.map((x) => x.id) }) }
   const refreshInfo = () => { if (info) api.getSession(info.id).then((s) => { setInfo(s); setList((l) => l.map((x) => (x.id === s.id ? s : x))) }).catch(() => undefined) }
+  /** Renomeia o IED (o nome aparece no DigitalRelay, SCADA, SystemLab e IEC61850); vazio volta ao nome do ajuste no .rdb. */
+  const rename = async (s: SessionInfo) => {
+    const name = window.prompt('Nome do IED (deixe vazio para voltar ao nome do ajuste):', s.device)
+    if (name == null) return
+    try {
+      const r = await api.renameSession(s.id, name)
+      setList((l) => l.map((x) => (x.id === s.id ? { ...x, device: r.device } : x)))
+      if (info?.id === s.id) setInfo((i) => (i ? { ...i, device: r.device } : i))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
   const remove = (s: SessionInfo) => {
     api.iecBind(s.id, null).catch(() => undefined)
     api.deleteSession(s.id).catch(() => undefined)
@@ -233,6 +279,7 @@ function DigitalRelayApp() {
         onChange={() => { setConfig(false); setAdding(false); setView('select') }}
         onConfig={() => setConfig((c) => !c)}
         onExport={() => { if (info) exportRelay(info.id, info.relay_id, info.device) }}
+        onExportAll={exportAllRelays}
         configOpen={config}
       />
       {config ? (
@@ -254,9 +301,11 @@ function DigitalRelayApp() {
           <div className="inst-bar">
             {list.map((s) => (
               <span key={s.id}>
-                <button className={`chip-btn ${s.id === info.id ? 'active' : ''}`} onClick={() => select(s)} title={s.device}>
-                  {(s.relay_id || s.device).slice(0, 34)}{s.ied ? ` · ${s.ied}` : ''}
+                <button className={`chip-btn ${s.id === info.id ? 'active' : ''}`} onClick={() => select(s)} onDoubleClick={() => rename(s)} title={`${s.device}
+(duplo clique ou ✎ para renomear)`}>
+                  {(s.device || s.relay_id).slice(0, 34)}{s.ied ? ` · ${s.ied}` : ''}
                 </button>
+                {s.id === info.id && <button className="link" onClick={() => rename(s)} title="Renomear este IED" aria-label="Renomear IED">✎</button>}
                 <button className="link" onClick={() => remove(s)} title="Encerrar este relé" aria-label="Encerrar relé">×</button>
               </span>
             ))}
@@ -300,7 +349,7 @@ export default function App() {
   const hash = useHash()
   const m = hash.match(/^#\/injecao\/([A-Za-z0-9]+)/)
   if (m) return <InjectionWindow sid={m[1]} />
-  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/systemlab') ? 'systemlab' : hash.startsWith('#/overcurrent') ? 'overcurrent' : hash.startsWith('#/iec61850') ? 'iec61850' : hash.startsWith('#/mbitconfig') ? 'mbitconfig' : hash.startsWith('#/about') ? 'about' : 'home'
+  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/systemlab') ? 'systemlab' : hash.startsWith('#/overcurrent') ? 'overcurrent' : hash.startsWith('#/iec61850') ? 'iec61850' : hash.startsWith('#/mbitconfig') ? 'mbitconfig' : hash.startsWith('#/scada') ? 'scada' : hash.startsWith('#/about') ? 'about' : 'home'
   return (
     <EclipseShell route={route}>
       {route === 'home' && <HomeView />}
@@ -310,6 +359,7 @@ export default function App() {
       {route === 'overcurrent' && <OvercurrentApp />}
       {route === 'iec61850' && <IEC61850App />}
       {route === 'mbitconfig' && <MBitConfigApp />}
+      {route === 'scada' && <ScadaApp />}
       {route === 'digitalrelay' && <PrefsProvider><DigitalRelayApp /></PrefsProvider>}
     </EclipseShell>
   )

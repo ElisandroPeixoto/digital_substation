@@ -60,4 +60,12 @@ export const APPS: EclipseApp[] = [
     glyph: '⚡',
     icon: '/app-icons/mbitconfig.png',
   },
+  {
+    id: 'scada',
+    name: 'SCADA',
+    description: 'Supervisório dos IEDs do DigitalRelay: eventos binários, medidas analógicas e comandos pelo mapa DNP3, com textos de uma planilha de mapa.',
+    route: '#/scada',
+    glyph: '📟',
+    icon: '/app-icons/scada.png',
+  },
 ]

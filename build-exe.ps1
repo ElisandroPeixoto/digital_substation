@@ -1,4 +1,4 @@
-# Gera o executável do Eclipse (pasta com Eclipse.exe, sem console, com ícone) e o .zip para distribuição.
+﻿# Gera o executável do Eclipse (pasta com Eclipse.exe, sem console, com ícone) e o .zip para distribuição.
 #   ./build-exe.ps1              -> roda frontend (build), testes, PyInstaller e compacta em release\Eclipse-<data>-<commit>.zip
 #   ./build-exe.ps1 -SkipTests   -> pula o pytest
 # Requer: .venv com as dependências do backend (run.ps1 a cria), Node/npm e acesso à internet na primeira vez (pip install pyinstaller).

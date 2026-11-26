@@ -60,13 +60,14 @@ export const api = {
   exportSession: (sid: string) => req<Record<string, unknown>>('GET', `/sessions/${sid}/export`),
   importSession: (data: unknown) => req<SessionInfo & { warnings?: string[] }>('POST', '/sessions/import', data),
   deleteSession: (sid: string) => req<unknown>('DELETE', `/sessions/${sid}`),
+  renameSession: (sid: string, name: string) => req<{ device: string }>('PATCH', `/sessions/${sid}`, { name }),
   restart: (sid: string) => req<unknown>('POST', `/sessions/${sid}/restart`),
   control: (sid: string, body: { running?: boolean; speed?: number }) =>
     req<{ running: boolean; speed: number }>('POST', `/sessions/${sid}/control`, body),
 
   panel: (sid: string) => req<PanelData>('GET', `/sessions/${sid}/panel`),
   state: (sid: string) => req<StateData>('GET', `/sessions/${sid}/state`),
-  ser: (sid: string, since: number) => req<{ events: SerEvent[]; last_seq: number }>('GET', `/sessions/${sid}/ser?since=${since}`),
+  ser: (sid: string, since: number) => req<{ events: SerEvent[]; last_seq: number; epoch?: number }>('GET', `/sessions/${sid}/ser?since=${since}`),
   clearSer: (sid: string) => req<unknown>('DELETE', `/sessions/${sid}/ser`),
 
   button(sid: string, button: string, pressed: boolean) {
@@ -108,6 +109,22 @@ export const api = {
   mbClear: () => req<unknown>('POST', '/mbits/clear'),
 
   sessions: () => req<SessionBrief[]>('GET', '/sessions'),
+
+  // SCADA: planilha de mapa (.xlsx/.csv) cruzada com o mapa DNP3 ativo do relé
+  async scadaMap(sid: string, file: File): Promise<{
+    relay_id: string; device: string; map: number; filename: string
+    accepted: { line: number; tipo: 'BI' | 'AI' | 'BO'; index: number; wordbit: string; desc?: string; v0?: string; v1?: string; note?: string }[]
+    rejected: { line: number; tipo: string; wordbit: string; reason: string }[]
+  }> {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(BASE + `/scada/map/${sid}`, { method: 'POST', body: form })
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({ detail: res.statusText }))
+      throw new Error(j.detail ?? res.statusText)
+    }
+    return res.json()
+  },
 
   // IEC 61850
   async iecUpload(file: File): Promise<IecProject> {

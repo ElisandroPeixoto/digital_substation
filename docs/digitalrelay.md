@@ -308,3 +308,9 @@ projeto IEC 61850 atual, a associação. Os textos do frontal (`front_panel`) vo
 - Relé associado a um IED do SystemLab: o SystemLab envia as grandezas por `POST /api/sessions/<sid>/systemlab` e elas **prevalecem** sobre a injeção manual (a janela de injeção fica travada e `/sim` recusa grandezas analógicas com 409). No cartão Medição do Painel frontal, **Isolar do SystemLab** (`SimConfig.sl_isolated`) devolve a injeção manual que o usuário tinha e passa a ignorar o SystemLab; desligando, volta a valer o SystemLab. O relé é considerado associado enquanto o SystemLab o atualiza (até 15 s sem atualização; o SystemLab só envia com a sua tela aberta).
 
 **25 desabilitado:** com `E25 = N` (ou VSCONN ≠ VS) no grupo ativo, os bits da função – 25A1, 25A2, SF, 59VP, 59VS, 59VDIF, DLDB, DLLB e LLDB – ficam em 0 (antes guardavam o último valor do grupo anterior ao trocar de grupo). Com `E25 = Y` o elemento volta a calculá-los pelos ajustes do grupo.
+
+**Exportar todos:** botão na barra do simulador; gera um único JSON (`format: "eclipse-digitalrelay-bundle"`, `relays: [...]`, um item por relé em execução no mesmo formato da exportação individual). O **Importar JSON** aceita tanto um relé quanto esse pacote (recria todos).
+
+**Limpar o SER** (aba Eventos ou SystemLab → Limpar SER dos relés): apaga os eventos e reinicia a numeração – o próximo evento volta a ser o nº 1. A resposta de `/ser` traz `epoch` (incrementado a cada limpeza), para a aba Eventos recomeçar a lista quando o SER for limpo por outro app.
+
+**Renomear IED:** duplo clique na aba do relé (ou ✎ ao lado da aba ativa). O nome (`PATCH /api/sessions/<sid>` `{name}`) aparece no DigitalRelay, SCADA, SystemLab e IEC61850, sobrevive ao Reiniciar e vai na exportação JSON; nome vazio volta ao nome do ajuste no .rdb.

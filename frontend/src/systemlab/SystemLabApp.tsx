@@ -1045,7 +1045,7 @@ export function SystemLabApp() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = `systemlab-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `${(dg.title || DEFAULT_TITLE).replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim() || 'systemlab'}.json`   // nome = título da simulação
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -1483,7 +1483,8 @@ export function SystemLabApp() {
             </div>
           </>
         ) : (
-          <Summary dg={dg} sol={sol} onSelect={(id) => setSel({ type: 'el', ids: [id] })} />
+          <Summary dg={dg} sol={sol} onSelect={(id) => setSel({ type: 'el', ids: [id] })}
+            relays={dg.els.filter((e) => e.kind === 'ied' && e.sid && sessions.some((x) => x.id === e.sid)).map((e) => ({ sid: e.sid!, name: e.name }))} />
         )}
       </aside>
     </div>
@@ -1758,9 +1759,16 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
   )
 }
 
-function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof solve>; onSelect: (id: number) => void }) {
+function Summary({ dg, sol, onSelect, relays }: { dg: Diagram; sol: ReturnType<typeof solve>; onSelect: (id: number) => void; relays: { sid: string; name: string }[] }) {
   const rows = (kind: Kind) => dg.els.filter((e) => e.kind === kind)
   const t = sol.totals
+  const [serMsg, setSerMsg] = useState<string | null>(null)
+  const clearSer = async () => {
+    if (!window.confirm(`Limpar o SER de ${relays.length} relé(s) do DigitalRelay associado(s) aos IEDs da simulação?`)) return
+    const r = await Promise.allSettled(relays.map((x) => api.clearSer(x.sid)))
+    const fail = relays.filter((_, i) => r[i].status === 'rejected').map((x) => x.name)
+    setSerMsg(fail.length ? `SER limpo, exceto em: ${fail.join(', ')}` : `SER limpo em ${relays.length} relé(s).`)
+  }
   return (
     <>
       <h3>Resumo do sistema</h3>
@@ -1808,8 +1816,8 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
               <h4>Medição</h4>
               <table className="tbl meas">
                 <tbody>
-                  {rows('tc').map((e) => <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{valueLines(e, sol.res.get(e.id))[0]}</td></tr>)}
-                  {rows('tp').map((e) => <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{valueLines(e, sol.res.get(e.id))[0]}</td></tr>)}
+                  {rows('tc').map((e) => { const r = sol.res.get(e.id); return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{r?.energized ? (r.extra.dc ? `${fmt(r.extra.idc, 1)} A CC` : `${fIm(r.i[0].mag, r.kvb?.[0])} → ${fmt(r.extra.isec, 3)} A`) : '–'}</td></tr> })}
+                  {rows('tp').map((e) => { const r = sol.res.get(e.id); return <tr key={e.id} className="sl-link" onClick={() => onSelect(e.id)}><td>{e.name}</td><td className="num">{tpTag(e)}{r?.energized ? ` · ${fmt(r.extra.vsec, 1)} V` : ''}</td></tr> })}
                 </tbody>
               </table>
             </>
@@ -1821,6 +1829,16 @@ function Summary({ dg, sol, onSelect }: { dg: Diagram; sol: ReturnType<typeof so
         carga = impedância constante na tensão nominal da zona; transformador = impedância série (sem derivação).
         Selecione um elemento para editar os parâmetros e ver os resultados.
       </p>
+      <div className="sl-actions">
+        <h4>Atalhos</h4>
+        <div className="row wrap">
+          <button onClick={clearSer} disabled={relays.length === 0}
+            title={relays.length ? `Apaga os eventos do SER de: ${relays.map((x) => x.name).join(', ')}` : 'Associe um IED a um relé do DigitalRelay para usar esta opção'}>
+            🧹 Limpar SER dos relés{relays.length ? ` (${relays.length})` : ''}
+          </button>
+        </div>
+        {serMsg && <p className="hint">{serMsg}</p>}
+      </div>
     </>
   )
 }

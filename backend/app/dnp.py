@@ -168,8 +168,14 @@ class DnpMap:
             return labels.get(name) or standard_label(name)
 
         bo = [{"index": i, "name": n, "desc": desc(n)} for i, n in sorted(self.bo.items())]
+        aliases = getattr(eng, "aliases", {})
+
+        def states(n: str) -> dict:
+            al = aliases.get(n)                     # ALIAS do relatório: textos dos estados 1 e 0
+            return {"t1": al[1].replace("_", " "), "t0": al[2].replace("_", " ")} if al else {}
+
         bi = [{"index": i, "name": n, "desc": desc(n), "value": (1 if v.get(n, 0.0) else 0) if n != "NA" else None,
-               "changed": self._bi_changed.get(i), "changed_w": self._bi_changed_w.get(i)} for i, n in sorted(self.bi.items())]
+               "changed": self._bi_changed.get(i), "changed_w": self._bi_changed_w.get(i), **states(n)} for i, n in sorted(self.bi.items())]
         ai = []
         for i, (n, scale, db) in sorted(self.ai.items()):
             if n == "NA":

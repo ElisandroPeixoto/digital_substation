@@ -1,4 +1,5 @@
 import type { PanelData, SessionInfo } from '../types'
+import { AppMark } from '../eclipse/AppMark'
 import { simTime, usePrefs } from '../prefs'
 
 const SPEEDS = [0.5, 1, 2, 5, 10]
@@ -12,15 +13,16 @@ interface Props {
   onChange: () => void
   onConfig: () => void
   onExport: () => void
+  onExportAll: () => void
   configOpen: boolean
 }
 
-export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, onConfig, onExport, configOpen }: Props) {
+export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, onConfig, onExport, onExportAll, configOpen }: Props) {
   const { prefs } = usePrefs()
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-mark">⚡</span>
+        <AppMark id="digitalrelay" />
         <div>
           <b>DigitalRelay</b>
           <small>{info ? `${info.device} · ${info.filename}` : 'Carregue um arquivo .rdb'}</small>
@@ -47,6 +49,7 @@ export function TopBar({ info, data, onPlayPause, onSpeed, onRestart, onChange, 
           <button onClick={onRestart} title="Reinicia o relé com os ajustes originais">↻ Reiniciar</button>
           <button onClick={onChange}>Trocar ajuste</button>
           <button onClick={onExport} title="Baixa um JSON com todos os ajustes do .rdb (incluindo os editados no simulador), a injeção e os textos do frontal">⬇ Exportar JSON</button>
+          <button onClick={onExportAll} title="Baixa um único JSON com todos os relés em execução no DigitalRelay (importável pelo botão Importar JSON)">⬇ Exportar todos</button>
         </div>
       )}
       <button className={`gear ${configOpen ? 'active' : ''}`} onClick={onConfig} title="Configurações" aria-label="Configurações">⚙</button>

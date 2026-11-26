@@ -28,6 +28,7 @@ class Session:
     speed: float = 1.0
     accum: float = 0.0
     created: float = field(default_factory=time.time)
+    alias: str | None = None          # nome dado pelo usuário (renomear IED); sobrevive ao reinício do relé
 
     def info(self) -> dict:
         st = self.engine.settings
@@ -80,6 +81,8 @@ class SessionManager:
 
     def restart(self, sess: Session) -> None:
         sess.engine = create_engine(sess.relay)
+        if sess.alias:
+            sess.engine.device_name = sess.alias
         for _ in range(5):
             sess.engine.step(BASE_DT)
         sess.accum = 0.0
