@@ -1,4 +1,4 @@
-import { TEXT_COLOR_VAR, busCells, flag, isBar, num, tpTag, type El, type Kind } from './model'
+import { TEXT_COLOR_VAR, busCells, flag, isBar, num, tpTag, type El, type Kind, hitRect } from './model'
 
 interface Props {
   kind: Kind
@@ -160,14 +160,41 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false,
 }
 
 /** Elemento Texto: várias linhas centradas, com tamanho, negrito e cor. */
+let measureCtx: CanvasRenderingContext2D | null = null
+/** Largura (px) de um texto na fonte dada, medida num canvas (usada no texto justificado). */
+function textWidth(t: string, font: string): number {
+  if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d')
+  if (!measureCtx) return t.length * 8
+  measureCtx.font = font
+  return measureCtx.measureText(t).width
+}
+
+/** Alinhamento do elemento Texto (`align`): 0 = esquerda, 1 = centralizado (padrão), 2 = direita, 3 = justificado. */
 function TextShape({ el }: { el: El }) {
   const lines = (el.text ?? 'Texto').split('\n')
   const size = Math.max(6, num(el, 'size'))
   const fill = TEXT_COLOR_VAR[Math.round(num(el, 'color'))] ?? TEXT_COLOR_VAR[0]
   const y0 = -((lines.length - 1) * size * 1.25) / 2 + size * 0.35
+  const align = el.p.align == null ? 1 : Math.round(num(el, 'align'))
+  const [bx, , bw] = hitRect(el)
+  const left = bx + 5
+  const width = bw - 10
+  const x = align === 1 ? 0 : align === 2 ? left + width : left
+  const anchor = align === 1 ? 'middle' : align === 2 ? 'end' : 'start'
+  // justificado: distribui a sobra entre as palavras (word-spacing), exceto na última linha de cada parágrafo (seguida de linha vazia ou fim)
+  const font = `${flag(el, 'bold') ? 700 : 400} ${size}px Montserrat, Segoe UI, sans-serif`
+  const justify = (i: number): { wordSpacing: number } | Record<string, never> => {
+    if (align !== 3 || i >= lines.length - 1 || lines[i + 1].trim() === '') return {}
+    const l = lines[i]
+    const spaces = (l.trim().match(/ +/g) ?? []).length
+    const free = width - textWidth(l, font)
+    return spaces > 0 && free > 0 ? { wordSpacing: free / spaces } : {}
+  }
   return (
-    <text x={0} y={y0} textAnchor="middle" fontSize={size} fontWeight={flag(el, 'bold') ? 700 : 400} fill={fill} stroke="none" fontFamily="Montserrat, Segoe UI, sans-serif" pointerEvents="none">
-      {lines.map((l, i) => <tspan key={i} x={0} dy={i === 0 ? 0 : size * 1.25}>{l || ' '}</tspan>)}
+    <text x={x} y={y0} textAnchor={anchor} fontSize={size} fontWeight={flag(el, 'bold') ? 700 : 400} fill={fill} stroke="none" fontFamily="Montserrat, Segoe UI, sans-serif" pointerEvents="none">
+      {lines.map((l, i) => (
+        <tspan key={i} x={x} dy={i === 0 ? 0 : size * 1.25} {...justify(i)}>{l || ' '}</tspan>
+      ))}
     </text>
   )
 }

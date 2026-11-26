@@ -260,7 +260,7 @@ export const KINDS: Record<Kind, KindInfo> = {
   text: {
     label: 'Texto',
     prefix: 'TX',
-    defaults: { size: 16, bold: false, color: 0 },
+    defaults: { size: 16, bold: false, color: 0, align: 1 },
     fields: [
       { key: 'size', label: 'Tamanho da fonte', unit: 'px', type: 'number', min: 6 },
       { key: 'bold', label: 'Negrito', type: 'bool' },

@@ -699,3 +699,9 @@ button.tag-btn:hover { text-decoration: line-through; }
 .sl-mpick summary { cursor: pointer; color: var(--accent); }
 .sl-mpick .chk { display: block; margin: 3px 0; }
 .sl-ps { margin-top: 6px; }
+
+/* SystemLab – elemento Texto: barra de formatação (numeração e alinhamento) */
+.sl-txtbar { display: flex; align-items: center; gap: 4px; }
+.sl-txtbar button { display: inline-flex; align-items: center; justify-content: center; padding: 4px 6px; min-width: 30px; }
+.sl-txtbar button.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.sl-txtbar .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }

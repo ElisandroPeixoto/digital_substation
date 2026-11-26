@@ -148,7 +148,27 @@ const BULLET = '• '
 
 /** Editor do elemento Texto: caixa larga com marcadores (•): "- " no início da linha vira "• ";
  *  Enter em uma linha com marcador continua a lista (Enter em um marcador vazio encerra a lista). */
-function TextEditor({ value, onChange }: { value: string; onChange: (t: string) => void }) {
+const NUM_RE = /^(\d+)[.)] /
+
+/** Renumera cada sequência de linhas numeradas ("1. ", "2. "…) a partir de 1. */
+function renumber(text: string): string {
+  let n = 0
+  return text.split('\n').map((l) => {
+    const m = NUM_RE.exec(l)
+    if (!m) { n = 0; return l }
+    n += 1
+    return `${n}. ${l.slice(m[0].length)}`
+  }).join('\n')
+}
+
+const ALIGNS: { v: number; l: string; d: string }[] = [
+  { v: 0, l: 'Alinhar à esquerda', d: 'M4 6h16M4 10h10M4 14h16M4 18h10' },
+  { v: 1, l: 'Centralizar', d: 'M4 6h16M7 10h10M4 14h16M7 18h10' },
+  { v: 2, l: 'Alinhar à direita', d: 'M4 6h16M10 10h10M4 14h16M10 18h10' },
+  { v: 3, l: 'Justificar', d: 'M4 6h16M4 10h16M4 14h16M4 18h16' },
+]
+
+function TextEditor({ value, onChange, align, onAlign }: { value: string; onChange: (t: string) => void; align: number; onAlign: (a: number) => void }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const caret = useRef<[number, number] | null>(null)
   useEffect(() => {
@@ -163,20 +183,57 @@ function TextEditor({ value, onChange }: { value: string; onChange: (t: string) 
     const pos = ta.selectionStart
     const [ls] = lineBounds(v, pos)
     const line = v.slice(ls, pos)
+    const nm = NUM_RE.exec(line)
+    if (nm) {                                                                     // lista numerada: Enter continua com o próximo número
+      e.preventDefault()
+      if (line === nm[0]) { set(renumber(v.slice(0, ls) + v.slice(pos)), ls); return }   // item vazio: encerra a lista
+      const next = `${Number(nm[1]) + 1}. `
+      set(renumber(v.slice(0, pos) + '\n' + next + v.slice(ta.selectionEnd)), pos + 1 + next.length)
+      return
+    }
     if (!line.startsWith(BULLET)) return
     e.preventDefault()
     if (line === BULLET) set(v.slice(0, ls) + v.slice(pos), ls)                   // marcador vazio: encerra a lista
     else set(v.slice(0, pos) + '\n' + BULLET + v.slice(ta.selectionEnd), pos + 1 + BULLET.length)
   }
+  /** Botão "1." : numera as linhas selecionadas (ou a linha do cursor); se já estiverem numeradas, tira a numeração. */
+  const toggleNumbers = () => {
+    const ta = ref.current
+    if (!ta) return
+    const v = ta.value
+    const [s0] = lineBounds(v, ta.selectionStart)
+    const [, e1] = lineBounds(v, Math.max(ta.selectionStart, ta.selectionEnd))
+    const lines = v.slice(s0, e1).split('\n')
+    const all = lines.every((l) => NUM_RE.test(l))
+    const out = lines.map((l, i) => {
+      const body = l.replace(NUM_RE, '').replace(BULLET, '')
+      return all ? body : `${i + 1}. ${body}`
+    }).join('\n')
+    const t = renumber(v.slice(0, s0) + out + v.slice(e1))
+    set(t, s0, s0 + out.length)
+    ta.focus()
+  }
   const onText = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const ta = e.target
     const pos = ta.selectionStart
-    const t = ta.value.replace(/(^|\n)[-*] /g, '$1' + BULLET)                      // "- " ou "* " no início da linha vira marcador
-    if (t !== ta.value) set(t, pos)
+    const b = ta.value.replace(/(^|\n)[-*] /g, '$1' + BULLET)                      // "- " ou "* " no início da linha vira marcador
+    const t = renumber(b)                                                          // "1. " / "1) " no início da linha: lista numerada
+    if (t !== ta.value) set(t, pos + (t.length - ta.value.length))
     else onChange(t)
   }
   return (
     <div className="sl-field col">
+      <div className="sl-txtbar" role="toolbar" aria-label="Formatação do texto">
+        <button type="button" onClick={toggleNumbers} title="Lista numerada (ou digite &quot;1. &quot; no início da linha)" aria-label="Lista numerada">
+          <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden><path d="M10 6h10M10 12h10M10 18h10" /><text x={2} y={8} fontSize={7} stroke="none" fill="currentColor">1</text><text x={2} y={14} fontSize={7} stroke="none" fill="currentColor">2</text><text x={2} y={20} fontSize={7} stroke="none" fill="currentColor">3</text></svg>
+        </button>
+        <span className="sep" />
+        {ALIGNS.map((a) => (
+          <button key={a.v} type="button" className={align === a.v ? 'active' : ''} aria-pressed={align === a.v} onClick={() => onAlign(a.v)} title={a.l} aria-label={a.l}>
+            <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden><path d={a.d} /></svg>
+          </button>
+        ))}
+      </div>
       <textarea ref={ref} className="sl-textarea" rows={6} aria-label="Texto" value={value} onKeyDown={onKey} onChange={onText} />
     </div>
   )
@@ -1172,7 +1229,10 @@ export function SystemLabApp() {
                 ? (vertBus ? [el.x + 16, el.y - busCells(el) * 10 - 6] : [el.x, el.y + 26])
                 : el.kind === 'fault' ? [el.x + 84, el.y - 12] : [el.x, el.y + (el.kind === 'ied' ? 46 : el.kind === 'transformer3' ? 66 : 40)]
               const hidden = !!el.hide
+              const isIed = el.kind === 'ied'
               const lines = showVals && !dragging && !hidden ? (isComm(el.kind) ? commLines(el) : valueLines(el, r)) : []
+              // IED: dados à direita do símbolo (o nome continua embaixo); "Ocultar dados" esconde só esses dados
+              const valPos = (i: number): [number, number] => (isIed ? [el.x + 38, el.y - 22 + 13 * i] : [lab[0], lab[1] + 12 * (i + 1)])
               return (
                 <g key={el.id} data-elid={el.id} onMouseEnter={() => setHover(el.id)} onMouseLeave={() => setHover((h) => (h === el.id ? null : h))}>
                   <g
@@ -1190,9 +1250,9 @@ export function SystemLabApp() {
                     <rect x={hx} y={hy} width={hw} height={hh} fill="transparent" stroke={selected ? 'var(--accent-2)' : 'none'} strokeDasharray="4 3" rx={4} />
                     <ElementSymbol el={el} color={color} />
                   </g>
-                  {!dragging && !hidden && el.kind !== 'text' && <text x={lab[0]} y={lab[1]} textAnchor={vertBus ? 'start' : 'middle'} className="sl-name" fill="var(--ink)" pointerEvents="none">{el.name}</text>}
+                  {!dragging && (!hidden || isIed) && el.kind !== 'text' && <text x={lab[0]} y={lab[1]} textAnchor={vertBus ? 'start' : 'middle'} className="sl-name" fill="var(--ink)" pointerEvents="none">{el.name}</text>}
                   {lines.map((t, i) => (
-                    <text key={i} x={lab[0]} y={lab[1] + 12 * (i + 1)} textAnchor={vertBus ? 'start' : 'middle'} className="sl-val" fill={on ? 'var(--accent-2)' : 'var(--muted)'} pointerEvents="none">{t}</text>
+                    <text key={i} x={valPos(i)[0]} y={valPos(i)[1]} textAnchor={vertBus || isIed ? 'start' : 'middle'} className="sl-val" fill={on ? 'var(--accent-2)' : 'var(--muted)'} pointerEvents="none">{t}</text>
                   ))}
                   {ports.map(([px, py], k) => (
                     <g key={k}>
@@ -1284,7 +1344,8 @@ export function SystemLabApp() {
           <>
             <h3>{KINDS[selEl.kind].label}</h3>
             {selEl.kind === 'text' ? (
-              <TextEditor key={selEl.id} value={selEl.text ?? ''} onChange={(t) => updateEl(selEl.id, (x) => ({ ...x, text: t }))} />
+              <TextEditor key={selEl.id} value={selEl.text ?? ''} onChange={(t) => updateEl(selEl.id, (x) => ({ ...x, text: t }))}
+                align={selEl.p.align == null ? 1 : num(selEl, 'align')} onAlign={(a) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, align: a } }))} />
             ) : (
               <label className="sl-field">
                 <span>Nome</span>
@@ -1378,7 +1439,7 @@ export function SystemLabApp() {
                 {(selEl.kind === 'breaker' || selEl.kind === 'switch') && (
                   <button className="primary" onClick={() => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, closed: !flag(x, 'closed') } }))} title="Abre ou fecha (também por duplo clique no símbolo)"><span className="ic"><SwitchIcon closed={!flag(selEl, 'closed')} /></span><span>{flag(selEl, 'closed') ? 'Abrir' : 'Fechar'}</span></button>
                 )}
-                {selEl.kind !== 'text' && <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title="Mostra ou oculta o nome e os dados deste elemento no diagrama"><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>}
+                {selEl.kind !== 'text' && <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title={selEl.kind === 'ied' ? 'Mostra ou oculta os dados à direita do IED (o nome continua visível)' : 'Mostra ou oculta o nome e os dados deste elemento no diagrama'}><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>}
                 {selEl.kind !== 'text' && <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (Shift+R)</span></button>}
                 <button className="danger" onClick={removeSel}><span className="ic"><TrashIcon /></span><span>Excluir</span></button>
               </div>
