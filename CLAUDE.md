@@ -130,6 +130,10 @@ demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em red
 
 ## Convenções e cuidados
 
+- **Versão** (semântica, atual 1.0.0): `frontend/package.json` (injetada pelo Vite em `eclipse/version.ts`, mostrada no Sobre com
+  data/commit da compilação e o `GET /api/version` do backend), `backend/app/version.py` e `CHANGELOG.md`; ao lançar versão, atualize
+  os três e `VERSION_HISTORY` (`test_version.py` confere).
+
 - Os `.rdb`/set files são **dados não confiáveis**: apenas parseados, nunca executados. Upload limitado a 100 MB; sessões ≤ 8.
 - Endpoints que tocam o motor são `async def` de propósito: rodam na mesma thread do laço de simulação (sem locks).
   Não os transforme em `def` sem repensar a concorrência. Parse do upload usa `run_in_threadpool`.

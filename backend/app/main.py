@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from .fieldsim import A_OP, A_OP2, FAULT_TYPES, PRESETS
 from .rdb import RdbArchive, parse_rdb
 from .scl import parse_scl
+from .version import __version__
 from .selogic import split_comment
 from .sessions import SPEEDS, Session, SessionManager
 
@@ -42,7 +43,13 @@ async def lifespan(_: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="Simulador SEL-751", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Eclipse", version=__version__, lifespan=lifespan)
+
+
+@app.get("/api/version")
+async def api_version() -> dict:
+    """Versão do Eclipse servida por este backend (o Sobre compara com a do frontend)."""
+    return {"version": __version__}
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { APPS } from './apps'
 import { useTheme } from './theme'
+import { APP_VERSION, BUILD_DATE, GIT_COMMIT, VERSION_HISTORY } from './version'
 
 export type Route = 'home' | 'about' | 'digitalrelay' | 'phaseengine' | 'systemlab' | 'overcurrent' | 'iec61850' | 'mbitconfig' | 'scada'
 
@@ -86,6 +87,37 @@ export function HomeView() {
   )
 }
 
+/** Versão do frontend, do servidor (backend) e da compilação; histórico de versões. */
+function VersionInfo() {
+  const [server, setServer] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch('/api/version').then((r) => (r.ok ? r.json() : null)).then((d) => { if (alive && d?.version) setServer(String(d.version)) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+  const built = new Date(BUILD_DATE)
+  const builtTxt = Number.isNaN(built.getTime()) ? BUILD_DATE : built.toLocaleString('pt-BR')
+  return (
+    <>
+      <h3>Versão</h3>
+      <table className="ecl-version"><tbody>
+        <tr><td>Eclipse</td><td><b>{APP_VERSION}</b></td></tr>
+        <tr><td>Servidor (API)</td><td>{server ?? '–'}{server && server !== APP_VERSION && <span className="ecl-version-warn"> ⚠ diferente da interface; recompile o frontend ou reinicie o servidor</span>}</td></tr>
+        <tr><td>Compilação</td><td>{builtTxt}{GIT_COMMIT && <> · commit <code>{GIT_COMMIT}</code></>}</td></tr>
+      </tbody></table>
+      <details className="ecl-history">
+        <summary>Histórico de versões</summary>
+        {VERSION_HISTORY.map((v) => (
+          <div key={v.version}>
+            <h4>{v.version} <span className="ecl-version-date">– {new Date(v.date + 'T12:00:00').toLocaleDateString('pt-BR')}</span></h4>
+            <ul>{v.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+          </div>
+        ))}
+      </details>
+    </>
+  )
+}
+
 export function AboutView() {
   return (
     <main className="ecl-about">
@@ -97,6 +129,7 @@ export function AboutView() {
         O <b>Eclipse</b> é um software de simulação de sistemas elétricos de potência. Ele reúne vários aplicativos que
         podem, ou não, interagir entre si.
       </p>
+      <VersionInfo />
       <h3>Aplicativos</h3>
       <ul>
         {APPS.map((a) => (

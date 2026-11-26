@@ -2,6 +2,12 @@
 
 Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclipse é servido na raiz `/`, com as imagens de `assets/` em `/eclipse-*.png`). Documentação interativa (Swagger): `/docs`. Erros: JSON `{"detail": "..."}`.
 
+## Versão
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/api/version` | `{"version": "1.0.0"}` – versão do Eclipse servida pelo backend (o Sobre compara com a do frontend). |
+
 ## Arquivo `.rdb`
 
 | Método | Rota | Descrição |

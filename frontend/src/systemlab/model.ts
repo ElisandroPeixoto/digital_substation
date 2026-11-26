@@ -299,7 +299,7 @@ export const KINDS: Record<Kind, KindInfo> = {
   tc: {
     label: 'TC',
     prefix: 'TC',
-    defaults: { ip: 600, is: 5 },
+    defaults: { ip: 600, is: 5, pol: 0 },
     fields: [
       { key: 'ip', label: 'Primário', unit: 'A', type: 'number', min: 0 },
       { key: 'is', label: 'Secundário', unit: 'A', type: 'number', min: 0 },

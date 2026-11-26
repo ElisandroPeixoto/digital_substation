@@ -1449,6 +1449,9 @@ export function SystemLabApp() {
                 {(selEl.kind === 'breaker' || selEl.kind === 'switch') && (
                   <button className="primary" onClick={() => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, closed: !flag(x, 'closed') } }))} title="Abre ou fecha (também por duplo clique no símbolo)"><span className="ic"><SwitchIcon closed={!flag(selEl, 'closed')} /></span><span>{flag(selEl, 'closed') ? 'Abrir' : 'Fechar'}</span></button>
                 )}
+                {selEl.kind === 'tc' && (
+                  <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, pol: num(x, 'pol') ? 0 : 1 } }))} title="Troca o lado da marca de polaridade (●) sem mexer no desenho; as correntes enviadas ao relé giram 180°"><span className="ic">⇄</span><span>Inverter polaridade</span></button>
+                )}
                 {selEl.kind !== 'text' && <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title={selEl.kind === 'ied' ? 'Mostra ou oculta os dados à direita do IED (o nome continua visível)' : 'Mostra ou oculta o nome e os dados deste elemento no diagrama'}><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>}
                 {selEl.kind !== 'text' && <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (Shift+R)</span></button>}
                 <button className="danger" onClick={removeSel}><span className="ic"><TrashIcon /></span><span>Excluir</span></button>
@@ -1553,10 +1556,13 @@ function iedAnalog(ied: El, model: string, elById: Map<number, El>, sol: ReturnT
     if (tcEl?.kind !== 'tc') return
     const r = sol.res.get(tcEl.id)
     const ft = sol.fault?.terms.get(tcEl.id)?.[0]                          // em falta: fasores por fase
+    // polaridade invertida (marca do lado do terminal 2): a corrente chega ao relé girada de 180°
+    const rot = num(tcEl, 'pol') ? 180 : 0
+    const wrap = (a: number) => ((((a + rot) + 180) % 360) + 360) % 360 - 180
     const mag = r?.energized ? r.i[0].mag : 0
-    const ang = r?.energized ? r.i[0].ang : 0
+    const ang = r?.energized ? wrap(r.i[0].ang) : 0
     if (ft && r?.energized) {
-      Object.assign(patch, { [`${pre}ia_mag`]: ft.i.a.mag, [`${pre}ib_mag`]: ft.i.b.mag, [`${pre}ic_mag`]: ft.i.c.mag, [`${pre}ia_ang`]: ft.i.a.ang, [`${pre}ib_ang`]: ft.i.b.ang, [`${pre}ic_ang`]: ft.i.c.ang })
+      Object.assign(patch, { [`${pre}ia_mag`]: ft.i.a.mag, [`${pre}ib_mag`]: ft.i.b.mag, [`${pre}ic_mag`]: ft.i.c.mag, [`${pre}ia_ang`]: wrap(ft.i.a.ang), [`${pre}ib_ang`]: wrap(ft.i.b.ang), [`${pre}ic_ang`]: wrap(ft.i.c.ang) })
     } else {
       Object.assign(patch, { [`${pre}ia_mag`]: mag, [`${pre}ib_mag`]: mag, [`${pre}ic_mag`]: mag, [`${pre}ia_ang`]: ang, [`${pre}ib_ang`]: ang - 120, [`${pre}ic_ang`]: ang + 120 })
     }
@@ -1751,6 +1757,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
           <tr><td>Relação</td><td className="num">{fmt(r.extra.ratio, 1)}:1</td></tr>
           <tr><td>Corrente primária</td><td className="num">{r.energized ? fI(r.i[0], r.kvb?.[0]) : '–'}</td></tr>
           <tr><td>Corrente secundária</td><td className="num">{r.energized ? `${fmt(r.extra.isec, 3)} A` : '–'}</td></tr>
+          <tr><td>Polaridade (●)</td><td className="num">{num(el, 'pol') ? 'terminal 2 (relé vê 2→1)' : 'terminal 1 (relé vê 1→2)'}</td></tr>
         </tbody></table>
       )}
       {el.kind === 'transformer' && <p className="hint">Carregamento: <b>{fmt(r.extra.loading, 1)} %</b> · perdas: <b>{fP(r.extra.loss, 3)}</b></p>}

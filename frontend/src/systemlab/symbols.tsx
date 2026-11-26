@@ -10,10 +10,12 @@ interface Props {
   dc?: boolean
   /** TP: rótulo "3φ" / "1φ A". */
   tag?: string
+  /** TC: lado da marca de polaridade (0 = terminal 1, à esquerda; 1 = terminal 2, à direita). */
+  pol?: number
 }
 
 /** Símbolo unifilar na orientação original, centrado em (0,0); terminais em ±40 (ou conforme o tipo). */
-export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false, tag }: Props) {
+export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false, tag, pol = 0 }: Props) {
   const s = { stroke: color, fill: 'none', strokeWidth: 2, strokeLinecap: 'round' as const }
   switch (kind) {
     case 'source':
@@ -154,6 +156,8 @@ export function SymbolShape({ kind, color, closed = true, cells = 8, dc = false,
         <g {...s}>
           <line x1={-40} y1={0} x2={40} y2={0} />
           <path d="M -15 0 A 7.5 7.5 0 0 1 0 0 A 7.5 7.5 0 0 1 15 0" strokeWidth={2.2} />
+          {/* marca de polaridade: a corrente que entra por este lado chega ao relé com o sentido positivo */}
+          <circle cx={pol ? 20 : -20} cy={-9} r={3.5} fill={color} stroke="none" />
         </g>
       )
   }
@@ -201,5 +205,5 @@ function TextShape({ el }: { el: El }) {
 
 export function ElementSymbol({ el, color }: { el: El; color: string }) {
   if (el.kind === 'text') return <TextShape el={el} />
-  return <SymbolShape kind={el.kind} color={color} closed={flag(el, 'closed')} dc={flag(el, 'dc')} cells={isBar(el.kind) ? busCells(el) : undefined} tag={el.kind === 'tp' ? tpTag(el) : undefined} />
+  return <SymbolShape kind={el.kind} color={color} closed={flag(el, 'closed')} dc={flag(el, 'dc')} cells={isBar(el.kind) ? busCells(el) : undefined} tag={el.kind === 'tp' ? tpTag(el) : undefined} pol={el.kind === 'tc' ? num(el, 'pol') : undefined} />
 }

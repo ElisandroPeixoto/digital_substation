@@ -342,6 +342,14 @@ td.files { background: var(--soft); }
 .ecl-app small { color: var(--muted); font-size: 12px; line-height: 1.35; }
 .ecl-about { max-width: 720px; margin: 50px auto; padding: 0 20px; line-height: 1.6; }
 .ecl-about a { color: var(--accent); }
+.ecl-version { border-collapse: collapse; margin: 4px 0 10px; }
+.ecl-version td { padding: 3px 18px 3px 0; vertical-align: top; }
+.ecl-version td:first-child { color: var(--muted); }
+.ecl-version-warn { color: var(--warn); font-size: 0.9em; }
+.ecl-history { margin-bottom: 12px; }
+.ecl-history summary { cursor: pointer; color: var(--accent); }
+.ecl-history h4 { margin: 10px 0 2px; }
+.ecl-version-date { color: var(--muted); font-weight: normal; }
 
 /* ------------------------------------------------------------- tema claro */
 :root[data-theme='light'] {
