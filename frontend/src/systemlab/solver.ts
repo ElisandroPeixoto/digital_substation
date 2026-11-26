@@ -19,6 +19,9 @@ import { FAULT_TYPES, busCells, flag, isComm, num, t3group, tpPhase, vgroup, typ
 export const DEFAULT_SBASE = 100 // MVA
 /** Potência de base (MVA) da última chamada de `solve` (módulo síncrono: ajustada no início de cada cálculo). */
 let SBASE = DEFAULT_SBASE
+export const DEFAULT_FNOM = 60 // Hz
+/** Frequência nominal do sistema (Hz) da última chamada de `solve`. */
+let FNOM = DEFAULT_FNOM
 const Y_SWITCH = 1e4 // pu (Z = 1e-4 pu)
 
 interface Cx { re: number; im: number }
@@ -169,8 +172,9 @@ function t3Info(e: El, zscale: number): T3Info {
 interface Branch { a: number; b: number; y: Cx; ph?: number }
 
 /** `energize` falso (simulação parada): fontes e inversores desligados, nada é energizado. */
-export function solve(allEls: El[], allWires: Wire[], energize = true, withFault = false, sbase = DEFAULT_SBASE): Solution {
+export function solve(allEls: El[], allWires: Wire[], energize = true, withFault = false, sbase = DEFAULT_SBASE, fnom = DEFAULT_FNOM): Solution {
   SBASE = Number.isFinite(sbase) && sbase > 0 ? sbase : DEFAULT_SBASE
+  FNOM = Number.isFinite(fnom) && fnom > 0 ? fnom : DEFAULT_FNOM
   // elementos de comunicação (IED, Rede) e suas ligações não participam do cálculo elétrico
   const comm = new Set(allEls.filter((e) => isComm(e.kind)).map((e) => e.id))
   const els = allEls.filter((e) => !comm.has(e.id) && e.kind !== 'text' && (energize || e.kind !== 'source'))
@@ -612,6 +616,20 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
     res.set(e.id, r)
   }
   const out: Solution = { res, nodeEnergized, totals }
+  // frequência de cada ilha CA: a da (primeira) fonte da ilha; ilha formada só por inversor = nominal
+  const islandF = new Map<number, number>()
+  for (const e of els) if (e.kind === 'source') {
+    const root = uc.find(node(e, 0))
+    if (!islandF.has(root)) islandF.set(root, sourceFreq(e))
+  }
+  const freqOf = (e: El): number => islandF.get(uc.find(node(e, 0))) ?? FNOM
+  const stampFreq = () => {
+    for (const e of els) {
+      const r = out.res.get(e.id)
+      if (r && r.energized && !r.extra.dc) r.extra = { ...r.extra, freq: freqOf(e) }
+    }
+  }
+  stampFreq()
   if (withFault && energize) {
     const fr = faultStudy({ els, node, nodes: [...allNodes], bk, sources, loadY, trafoY, lineZ, t3Z, invs, iBase }, res)
     if (fr) {
@@ -628,6 +646,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
       }
       out.totals = t
       out.fault = { info: fr.info, terms: fr.terms, warns: fr.warns }
+      stampFreq()
     } else out.fault = null
   }
   return out
@@ -668,6 +687,12 @@ const srcGrounded = (e: El): boolean => flag(e, 'gnd')
 /** Impedâncias de sequência positiva (= negativa) e zero da fonte CA, em pu na base da barra (vb = kV base do nó).
  *  Modo 0: Ssc (MVA) e X1/R1 dão Z1; R0 = R1·(R0/R1) e X0 = X1·(X0/X1). Diagramas antigos com Z0/Z1 (z0r) continuam valendo.
  *  Modo 1: Isc trifásica (kA ∠θ3) e monofásica (kA ∠θ1) com E = Vnom/√3 ∠0°: Z1 = E / I3φ e Z0 = 3E / I1φ − 2·Z1. */
+/** Frequência da fonte (Hz): ajuste `freq`; sem ajuste = frequência nominal do sistema. */
+export function sourceFreq(e: El, fnom = FNOM): number {
+  const f = e.p.freq
+  return typeof f === 'number' && Number.isFinite(f) && f > 0 ? f : fnom
+}
+
 export function sourceZ(e: El, vb: number): { z1: Cx; z0: Cx } {
   // percentual da fonte (0 a 1000 %): escala o nível de curto-circuito; 100 % = parametrizado, 0 % = fonte sem contribuição
   const pct = Math.min(1000, Math.max(e.p.pct == null ? 100 : num(e, 'pct'), 0)) / 100

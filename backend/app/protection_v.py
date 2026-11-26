@@ -457,6 +457,9 @@ REG_BITS = (
 )
 
 
+SYNC_BITS = ("25A1", "25A2", "SF", "59VP", "59VS", "59VDIF", "DLDB", "DLLB", "LLDB")
+
+
 def build_extra(eng: "RelayEngine") -> list:
     """Cria os elementos adicionais habilitados e registra os bits (mesmo desabilitados) para as equações SELogic."""
     v = eng.vals
@@ -477,6 +480,11 @@ def build_extra(eng: "RelayEngine") -> list:
     out += [e for e in (ThreePhaseVolt(eng, "3P27"), ThreePhaseVolt(eng, "3P59")) if e.pickup is not None]
     if _txt(eng, "E25", "N").upper() == "Y" and _txt(eng, "VSCONN", "VS").upper() == "VS":
         out.append(SyncCheck(eng))
+    else:
+        # 25 desabilitado (E25 = N, ex.: troca para um grupo sem sincronismo): os bits da função vão a zero,
+        # em vez de manter o último valor do grupo anterior
+        for b in SYNC_BITS:
+            v[b] = 0.0
     for n in (1, 2):
         if eng.group_has(f"3PWR{n}P") and _num(eng, f"3PWR{n}P") is not None and _enabled_pwr(eng, n):
             out.append(PowerElement(eng, n))

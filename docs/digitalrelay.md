@@ -306,3 +306,5 @@ projeto IEC 61850 atual, a associação. Os textos do frontal (`front_panel`) vo
 
 - Aba Ajustes: clicar na etiqueta **alterado** volta o ajuste ao valor original do .rdb (`DELETE /api/sessions/<sid>/settings/<classe>/<ajuste>`; a dica mostra o valor original).
 - Relé associado a um IED do SystemLab: o SystemLab envia as grandezas por `POST /api/sessions/<sid>/systemlab` e elas **prevalecem** sobre a injeção manual (a janela de injeção fica travada e `/sim` recusa grandezas analógicas com 409). No cartão Medição do Painel frontal, **Isolar do SystemLab** (`SimConfig.sl_isolated`) devolve a injeção manual que o usuário tinha e passa a ignorar o SystemLab; desligando, volta a valer o SystemLab. O relé é considerado associado enquanto o SystemLab o atualiza (até 15 s sem atualização; o SystemLab só envia com a sua tela aberta).
+
+**25 desabilitado:** com `E25 = N` (ou VSCONN ≠ VS) no grupo ativo, os bits da função – 25A1, 25A2, SF, 59VP, 59VS, 59VDIF, DLDB, DLLB e LLDB – ficam em 0 (antes guardavam o último valor do grupo anterior ao trocar de grupo). Com `E25 = Y` o elemento volta a calculá-los pelos ajustes do grupo.

@@ -127,6 +127,21 @@ def test_sync_check_static_angles_and_window():
     assert not e.vals["59VS"] and not e.vals["SF"] and not e.vals["25A1"]
 
 
+def test_sync_disabled_clears_bits_and_reenabled_uses_settings():
+    """E25 = N (ex.: troca para um grupo sem sincronismo): bits do 25 em zero; E25 = Y: volta a seguir os ajustes."""
+    e = make(**SYNC)
+    volts(e, 115.0, vs_mag=115.0 * PTR, vs_ang=10.0)
+    run(e, 0.2)
+    assert e.vals["25A1"] and e.vals["SF"] and e.vals["59VP"]
+    e.apply_setting("1", "E25", "N")
+    assert all(e.vals[b] == 0.0 for b in ("25A1", "25A2", "SF", "59VP", "59VS", "59VDIF", "DLDB", "DLLB", "LLDB"))
+    run(e, 0.2)
+    assert all(e.vals[b] == 0.0 for b in ("25A1", "25A2", "SF", "59VP", "59VS", "59VDIF", "DLDB", "DLLB", "LLDB"))
+    e.apply_setting("1", "E25", "Y")
+    run(e, 0.2)
+    assert e.vals["25A1"] and e.vals["SF"] and e.vals["59VP"]
+
+
 def test_sync_check_syncph_angle_and_block():
     e = make(**{**SYNC, "SYNCPH": "90"})                         # VS atrasa VA em 90°
     volts(e, 115.0, vs_mag=115.0 * PTR, vs_ang=-90.0)

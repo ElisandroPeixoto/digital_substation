@@ -5,7 +5,7 @@ import type { SessionBrief } from '../types'
 import {
   BUS_MAX_CELLS, FAULT_TYPES, GRID, KINDS, TP_PHASES, tpPhase, tpTag, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
   type Diagram, type El, type Kind, type PortRef, DEFAULT_TITLE } from './model'
-import { DEFAULT_SBASE, solve, type ElResult, type FaultStudy, type Ph, type PhasorSet } from './solver'
+import { DEFAULT_FNOM, DEFAULT_SBASE, solve, sourceFreq, type ElResult, type FaultStudy, type Ph, type PhasorSet } from './solver'
 import { ElementSymbol, SymbolShape } from './symbols'
 import { ShortcutEditor, ShortcutPanel } from './Shortcuts'
 
@@ -70,10 +70,12 @@ function resizeBus(d0: Diagram, id: number, n1raw: number, side: 'lo' | 'hi'): D
 const EXPORT_FORMAT = 'eclipse-systemlab'
 
 /** Valida e normaliza um arquivo JSON exportado pelo SystemLab: devolve o diagrama e as configurações ou lança um Error com o motivo. */
-function parseImport(text: string): { diagram: Diagram; settings?: { sbase: number; pu: boolean } } {
+interface Cfg { sbase: number; pu: boolean; fnom: number }
+
+function parseImport(text: string): { diagram: Diagram; settings?: Cfg } {
   let j: unknown
   try { j = JSON.parse(text) } catch { throw new Error('O arquivo não é um JSON válido.') }
-  const o = j as { format?: string; diagram?: { els?: unknown; wires?: unknown; title?: unknown; desc?: unknown }; settings?: { sbase?: number; pu?: boolean } }
+  const o = j as { format?: string; diagram?: { els?: unknown; wires?: unknown; title?: unknown; desc?: unknown }; settings?: { sbase?: number; pu?: boolean; fnom?: number } }
   if (!o || typeof o !== 'object' || o.format !== EXPORT_FORMAT || !o.diagram) throw new Error('O arquivo não é uma exportação do SystemLab (formato desconhecido).')
   const rawEls = o.diagram.els
   const rawWires = o.diagram.wires
@@ -92,7 +94,7 @@ function parseImport(text: string): { diagram: Diagram; settings?: { sbase: numb
   const port = (v: unknown): v is [number, number] => Array.isArray(v) && v.length === 2 && isNum(v[0]) && isNum(v[1])
   const wires = (rawWires as Record<string, unknown>[]).filter((w) => w && isNum(w.id) && port(w.a) && port(w.b) && ids.has(w.a[0]) && ids.has(w.b[0])) as unknown as Diagram['wires']
   const nextId = Math.max(1, ...els.map((e) => e.id), ...wires.map((w) => w.id)) + 1
-  const settings = o.settings && isNum(o.settings.sbase) && o.settings.sbase > 0 ? { sbase: o.settings.sbase, pu: o.settings.pu === true } : undefined
+  const settings = o.settings && isNum(o.settings.sbase) && o.settings.sbase > 0 ? { sbase: o.settings.sbase, pu: o.settings.pu === true, fnom: o.settings.fnom === 50 ? 50 : DEFAULT_FNOM } : undefined
   const title = typeof o.diagram.title === "string" && o.diagram.title.trim() ? o.diagram.title.slice(0, 120) : DEFAULT_TITLE
   const desc = typeof o.diagram.desc === "string" ? o.diagram.desc.slice(0, 2000) : ""
   return { diagram: { els, wires: pruneTaps(wires), nextId, title, desc }, settings }
@@ -366,7 +368,7 @@ const fmt = (x: number, d = 2) => {
   return (Object.is(r, -0) || r === 0 ? 0 : r).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d })
 }
 /** Exibição: valores em unidades de engenharia ou em pu (base = potência de base e tensão de base do terminal). Atualizado a cada renderização. */
-const DISP = { pu: false, sbase: DEFAULT_SBASE }
+const DISP = { pu: false, sbase: DEFAULT_SBASE, fnom: DEFAULT_FNOM }
 /** Potência (MW/Mvar/MVA) em pu quando habilitado. */
 const fP = (x: number, d = 2) => (DISP.pu ? `${fmt(x / DISP.sbase, 4)} pu` : `${fmt(x, d)} MW`)
 const fQ = (x: number, d = 2) => (DISP.pu ? `${fmt(x / DISP.sbase, 4)} pu` : `${fmt(x, d)} Mvar`)
@@ -390,7 +392,7 @@ function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
     case 'battery': return [`SOC ${fmt(r.extra.soc, 0)}% · ${fP(r.extra.pdc)}`, r.note ?? '']
     case 'inverter': return [r.energized ? `${fP(r.extra.p)} · ${fQ(r.extra.q)}` : (r.note ?? 'inativo'), ...(r.energized && r.note ? [r.note] : [])]
     case 'bus': return [r.energized ? fV(r.v[0], r.kvb?.[0]) : 'desenergizado']
-    case 'source': return [`${fP(r.extra.p)} · ${fQ(r.extra.q)}`]
+    case 'source': return [`${fP(r.extra.p)} · ${fQ(r.extra.q)}`, ...(r.extra.freq && Math.abs(r.extra.freq - DISP.fnom) > 1e-6 ? [`${fmt(r.extra.freq, 2)} Hz`] : [])]
     case 'load': return r.energized ? [`${fP(r.extra.p)} · ${fQ(r.extra.q)}`, fV({ mag: r.v[0].mag, ang: 0 }, r.kvb?.[0]).replace(/ ∠.*$/, '')] : ['desenergizado']
     case 'breaker':
     case 'switch': {
@@ -441,21 +443,22 @@ export function SystemLabApp() {
   const [box, setBox] = useState<Box | null>(null)      // retângulo de seleção
   const [showVals, setShowVals] = useState(true)
   // configurações do SystemLab (engrenagem): potência de base e exibição em pu
-  const [cfg, setCfg] = useState<{ sbase: number; pu: boolean }>(() => {
+  const [cfg, setCfg] = useState<Cfg>(() => {
     try {
       const j = JSON.parse(localStorage.getItem('systemlab.settings') ?? '{}')
-      return { sbase: Number.isFinite(j.sbase) && j.sbase > 0 ? j.sbase : DEFAULT_SBASE, pu: j.pu === true }
-    } catch { return { sbase: DEFAULT_SBASE, pu: false } }
+      return { sbase: Number.isFinite(j.sbase) && j.sbase > 0 ? j.sbase : DEFAULT_SBASE, pu: j.pu === true, fnom: j.fnom === 50 ? 50 : DEFAULT_FNOM }
+    } catch { return { sbase: DEFAULT_SBASE, pu: false, fnom: DEFAULT_FNOM } }
   })
   const [showCfg, setShowCfg] = useState(false)
   const [ioMsg, setIoMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const saveCfg = (n: { sbase: number; pu: boolean }) => {
+  const saveCfg = (n: Cfg) => {
     setCfg(n)
     try { localStorage.setItem('systemlab.settings', JSON.stringify(n)) } catch { /* ignora */ }
   }
   DISP.pu = cfg.pu
   DISP.sbase = cfg.sbase
+  DISP.fnom = cfg.fnom
   const { prefs } = usePrefs()
   const [run, setRun] = useState<'stopped' | 'playing' | 'paused'>('stopped')   // parado: fontes desligadas; Play energiza e roda
   const [speed, setSpeed] = useState(1)
@@ -482,10 +485,10 @@ export function SystemLabApp() {
 
   const dgRef = useRef(dg)
   dgRef.current = dg
-  const solBase = useMemo(() => solve(dg.els, dg.wires, run !== 'stopped', false, cfg.sbase), [dg, run, cfg.sbase])
+  const solBase = useMemo(() => solve(dg.els, dg.wires, run !== 'stopped', false, cfg.sbase, cfg.fnom), [dg, run, cfg.sbase, cfg.fnom])
   // estudo de falta: sempre com as fontes ligadas (permite ver as grandezas antes de rodar); em execução, o diagrama passa a mostrar a falta
   const hasFault = dg.els.some((e) => e.kind === 'fault' && flag(e, 'on'))
-  const study = useMemo(() => (hasFault ? solve(dg.els, dg.wires, true, true, cfg.sbase) : null), [dg, hasFault, cfg.sbase])
+  const study = useMemo(() => (hasFault ? solve(dg.els, dg.wires, true, true, cfg.sbase, cfg.fnom) : null), [dg, hasFault, cfg.sbase, cfg.fnom])
   const sol = run !== 'stopped' && study?.fault ? study : solBase
 
   // relógio da simulação (tempo real × velocidade)
@@ -1036,7 +1039,7 @@ export function SystemLabApp() {
   const exportJson = () => {
     const payload = {
       format: EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(),
-      settings: { sbase: cfg.sbase, pu: cfg.pu },
+      settings: { sbase: cfg.sbase, pu: cfg.pu, fnom: cfg.fnom },
       diagram: { els: dg.els, wires: dg.wires, nextId: dg.nextId, title: dg.title || DEFAULT_TITLE, desc: dg.desc ?? "" },
     }
     const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
@@ -1311,6 +1314,13 @@ export function SystemLabApp() {
                 <span><NumInput key={`sb-${cfg.sbase}`} value={cfg.sbase} onChange={(n) => saveCfg({ ...cfg, sbase: n > 0 ? n : DEFAULT_SBASE })} /> MVA</span>
               </label>
               <label className="sl-field">
+                <span>Frequência nominal do sistema</span>
+                <select className="numinput" value={cfg.fnom} onChange={(e) => saveCfg({ ...cfg, fnom: Number(e.target.value) })}>
+                  <option value={60}>60 Hz</option>
+                  <option value={50}>50 Hz</option>
+                </select>
+              </label>
+              <label className="sl-field">
                 <span>Exibir grandezas em pu</span>
                 <input type="checkbox" checked={cfg.pu} onChange={(e) => saveCfg({ ...cfg, pu: e.target.checked })} />
               </label>
@@ -1362,7 +1372,7 @@ export function SystemLabApp() {
                     {f.options!.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
                   </select>
                 ) : (
-                  <NumInput key={`${selEl.id}-${f.key}`} value={num(selEl, f.key)} onChange={(n) => (isBar(selEl.kind) && f.key === 'cells'
+                  <NumInput key={`${selEl.id}-${f.key}-${cfg.fnom}`} value={selEl.kind === 'source' && f.key === 'freq' ? sourceFreq(selEl, cfg.fnom) : num(selEl, f.key)} onChange={(n) => (isBar(selEl.kind) && f.key === 'cells'
                     ? setDg((g) => resizeBus(g, selEl.id, n, 'hi'))
                     : updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: Math.min(f.max ?? Infinity, f.min != null ? Math.max(f.min, n) : n) } })))} />
                 )}
@@ -1570,9 +1580,13 @@ function iedAnalog(ied: El, model: string, elById: Map<number, El>, sol: ReturnT
   }
   if (tps?.kind === 'tp' && num(tps, 'phases') === 1) {                  // só TP monofásico alimenta o VS
     const rs = sol.res.get(tps.id)
-    if (rs?.energized) Object.assign(patch, { vs_mag: rs.extra.kvm * 1000, vs_ang: rs.extra.angm })
+    if (rs?.energized) Object.assign(patch, { vs_mag: rs.extra.kvm * 1000, vs_ang: rs.extra.angm, ...(rs.extra.freq ? { vs_freq: rs.extra.freq } : {}) })
     else Object.assign(patch, { vs_mag: 0, vs_ang: 0 })
   }
+  // frequência: a da ilha onde está o TP de tensões (ou, sem TP, a do TC do enrolamento 1)
+  const fEl = tp?.kind === 'tp' ? tp : tc?.kind === 'tc' ? tc : undefined
+  const fr = fEl ? sol.res.get(fEl.id)?.extra.freq : undefined
+  if (fr) patch.freq = fr
   return patch
 }
 
@@ -1581,9 +1595,9 @@ const IED_MEAS: { k: string; l: string }[] = [
   { k: 'i', l: 'Correntes de fase' }, { k: 'v', l: 'Tensões fase-neutro' }, { k: 'vll', l: 'Tensões de linha' },
   { k: 'seqi', l: 'Componentes simétricas – corrente' }, { k: 'seqv', l: 'Componentes simétricas – tensão' },
   { k: 'pq', l: 'Potências (P, Q, S)' }, { k: 'fp', l: 'Fator de potência' }, { k: 'vs', l: 'Tensão de sincronismo (VS)' },
-  { k: 'w23', l: 'Correntes dos enrolamentos W2/W3 (SEL-787)' },
+  { k: 'w23', l: 'Correntes dos enrolamentos W2/W3 (SEL-787)' }, { k: 'f', l: 'Frequência' },
 ]
-const IED_MEAS_DEFAULT = ['i', 'v', 'seqi', 'seqv', 'pq', 'fp']
+const IED_MEAS_DEFAULT = ['i', 'v', 'seqi', 'seqv', 'pq', 'fp', 'f']
 
 type C = { re: number; im: number }
 const cP = (mag: number, deg: number): C => ({ re: mag * Math.cos((deg * Math.PI) / 180), im: mag * Math.sin((deg * Math.PI) / 180) })
@@ -1627,7 +1641,8 @@ function IedMeasurements({ el, patch, model, onChange }: { el: El; patch: Record
   if (show.includes('seqv') && hasV) { const [v0, v1, v2] = seq3(V[0], V[1], V[2]); rows.push(['V1', fKV(v1)], ['V2', fKV(v2)], ['V0', fKV(v0)]) }
   if (show.includes('pq') && hasI && hasV) rows.push(['P', `${fmt(P, 3)} MW`], ['Q', `${fmt(Q, 3)} Mvar`], ['S', `${fmt(Sabs, 3)} MVA`])
   if (show.includes('fp') && hasI && hasV) rows.push(['FP', Sabs > 1e-9 ? `${fmt(Math.abs(P) / Sabs, 3)} ${Q >= 0 ? '(indutivo)' : '(capacitivo)'}` : '–'])
-  if (show.includes('vs') && patch && 'vs_mag' in patch) rows.push(['VS', fKV(cP(g('vs_mag'), g('vs_ang')))])
+  if (show.includes('vs') && patch && 'vs_mag' in patch) rows.push(['VS', fKV(cP(g('vs_mag'), g('vs_ang')))], ...(patch.vs_freq ? [['FS (freq. de VS)', `${fmt(g('vs_freq'), 3)} Hz`] as [string, string]] : []))
+  if (show.includes('f') && patch?.freq) rows.push(['Frequência', `${fmt(g('freq'), 3)} Hz`])
   if (show.includes('w23') && model === '787') for (const w of ['w2', 'w3']) if (patch && `${w}ia_mag` in patch) ph(w, 'i').forEach((z, k) => rows.push([`I${'ABC'[k]} (${w.toUpperCase()})`, fA(z)]))
   return (
     <div className="sl-results">

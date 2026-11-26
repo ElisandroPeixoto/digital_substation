@@ -142,6 +142,7 @@ export const KINDS: Record<Kind, KindInfo> = {
     fields: [
       { key: 'vkv', label: 'Tensão nominal (fase-fase)', unit: 'kV', type: 'number', min: 0 },
       { key: 'ang', label: 'Ângulo da tensão', unit: '°', type: 'number' },
+      { key: 'freq', label: 'Frequência (vazio/0 = nominal do sistema)', unit: 'Hz', type: 'number', min: 0 },
       { key: 'gnd', label: 'Neutro aterrado', type: 'bool' },
       { key: 'pct', label: 'Percentual da fonte (0 a 1000 %; 100 % = parametrizado)', unit: '%', type: 'number', min: 0, max: 1000 },
       { key: 'zmode', label: 'Impedância da fonte', type: 'select', options: [{ v: 0, l: 'Potência de curto e relações X/R' }, { v: 1, l: 'Isc máx (trifásica e monofásica)' }] },
