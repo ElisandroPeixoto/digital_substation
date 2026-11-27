@@ -7,6 +7,7 @@ Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclip
 | Método | Rota | Descrição |
 |---|---|---|
 | GET | `/api/version` | `{"version": "1.0.0"}` – versão do Eclipse servida pelo backend. |
+| POST | `/api/shutdown` | Encerra o servidor local (botão Encerrar da janela do `Eclipse.exe`). Exige o cabeçalho `X-Eclipse-Launcher: 1` (sem ele: 403), o que obriga o preflight CORS e impede chamadas de outras origens. No executável, para o servidor interno; no uvicorn de linha de comando (`run.ps1`), equivale a Ctrl+C. |
 
 ## Arquivo `.rdb`
 

@@ -4,8 +4,8 @@ Sobe o servidor (API + interface) em 127.0.0.1, abre o navegador e mostra uma pe
 É o ponto de entrada do executável (PyInstaller, ``--noconsole``), mas também roda direto: ``python launcher.py``.
 
 - A porta preferida é a 8000 (o navegador guarda diagramas e configurações por origem, então manter a porta evita "perder" os dados);
-  se estiver ocupada por outro programa, usa a próxima livre até 8010. Se já houver um Eclipse rodando, abre o navegador nele e avisa
-  que a janela de encerrar é a dessa instância (ou, se for o servidor do run.ps1, que ele deve ser fechado).
+  se estiver ocupada por outro programa, usa a próxima livre até 8010. Se já houver um Eclipse rodando (outra janela ou o servidor
+  do run.ps1), abre o navegador nele e mostra a mesma janela de controle: "Encerrar" pede a esse servidor que feche (``POST /api/shutdown``).
 - Sem console não existe stdout/stderr: o registro vai para ``%LOCALAPPDATA%\\Eclipse\\eclipse.log``.
 """
 from __future__ import annotations
@@ -46,10 +46,20 @@ def _fix_streams() -> None:
         sys.stderr = sys.stderr or f
 
 
-def _is_eclipse(port: int) -> bool:
+def _is_eclipse(port: int, timeout: float = 1.5) -> bool:
     try:
-        with urllib.request.urlopen(f"http://{HOST}:{port}/api/sessions", timeout=1.5) as r:
+        with urllib.request.urlopen(f"http://{HOST}:{port}/api/sessions", timeout=timeout) as r:
             return r.status == 200 and r.read(1) == b"["
+    except Exception:
+        return False
+
+
+def _request_shutdown(port: int) -> bool:
+    """Pede ao Eclipse da porta que encerre (servidor de outra janela ou do run.ps1)."""
+    req = urllib.request.Request(f"http://{HOST}:{port}/api/shutdown", data=b"", method="POST", headers={"X-Eclipse-Launcher": "1"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            return r.status == 200
     except Exception:
         return False
 
@@ -76,8 +86,9 @@ def _message(title: str, text: str, error: bool = False) -> None:
         print(f"{title}: {text}")
 
 
-def _window(url: str, stop) -> None:
-    """Janela de controle (ícone do Eclipse na barra de tarefas): abrir no navegador ou encerrar."""
+def _window(url: str, stop, alive, note: str | None = None) -> None:
+    """Janela de controle (ícone do Eclipse na barra de tarefas): abrir no navegador ou encerrar.
+    `alive()` falso (servidor encerrado por outra janela) fecha a janela sozinha; `note` = linha extra (ex.: servidor já aberto)."""
     import tkinter as tk
     from tkinter import messagebox
 
@@ -101,6 +112,8 @@ def _window(url: str, stop) -> None:
     link = tk.Label(root, text=url, bg=bg, fg=accent, font=("Segoe UI", 10, "underline"), cursor="hand2")
     link.pack(padx=28)
     link.bind("<Button-1>", lambda _e: webbrowser.open(url))
+    if note:
+        tk.Label(root, text=note, bg=bg, fg="#A0AEC0", font=("Segoe UI", 9), justify="center").pack(padx=28, pady=(8, 0))
     tk.Label(root, text="Feche esta janela para encerrar o simulador.", bg=bg, fg="#A0AEC0", font=("Segoe UI", 9)).pack(padx=28, pady=(8, 10))
     row = tk.Frame(root, bg=bg)
     row.pack(pady=(0, 16))
@@ -113,6 +126,14 @@ def _window(url: str, stop) -> None:
     tk.Button(row, text="Abrir no navegador", command=lambda: webbrowser.open(url), width=18).pack(side="left", padx=6)
     tk.Button(row, text="Encerrar", command=quit_app, width=12).pack(side="left", padx=6)
     root.protocol("WM_DELETE_WINDOW", quit_app)
+
+    def watch() -> None:                                   # servidor encerrado por fora: fecha a janela
+        if not alive():
+            root.destroy()
+            return
+        root.after(1500, watch)
+
+    root.after(1500, watch)
     root.mainloop()
 
 
@@ -122,11 +143,11 @@ def main() -> int:
 
     port = None
     for p in PORTS:
-        if _is_eclipse(p):                                  # já está rodando: abre o navegador e avisa (a janela é da outra instância)
-            webbrowser.open(f"http://{HOST}:{p}")
-            _message("Eclipse", f"O Eclipse já está em execução em http://{HOST}:{p} (outra janela do Eclipse ou um servidor "
-                     "iniciado pelo run.ps1/uvicorn). O navegador foi aberto nele.\n\nPara encerrar, use a janela \"Eclipse em execução\" "
-                     "dessa instância ou feche o servidor que está usando a porta.")
+        if _is_eclipse(p):                                  # já está rodando: abre o navegador e controla esse servidor
+            url = f"http://{HOST}:{p}"
+            webbrowser.open(url)
+            _window(url, lambda: _request_shutdown(p), lambda: _is_eclipse(p, timeout=0.8),
+                    note="Servidor já estava aberto (outra janela do Eclipse ou run.ps1).")
             return 0
         if _port_free(p):
             port = p
@@ -135,7 +156,8 @@ def main() -> int:
         _message("Eclipse", f"Nenhuma porta livre entre {PORTS.start} e {PORTS.stop - 1}. Feche o programa que as usa e tente de novo.", error=True)
         return 1
 
-    from app.main import app                                # importado depois de ajustar sys.path / streams
+    from app import main as api                             # importado depois de ajustar sys.path / streams
+    app = api.app
 
     cfg = uvicorn.Config(app, host=HOST, port=port, log_config=None, access_log=False, http="h11", ws="none", loop="asyncio")
     server = uvicorn.Server(cfg)
@@ -154,8 +176,9 @@ def main() -> int:
         server.should_exit = True
         thread.join(timeout=5)
 
+    api.shutdown_hook = lambda: setattr(server, "should_exit", True)   # "Encerrar" de outra janela (POST /api/shutdown)
     try:
-        _window(url, stop)
+        _window(url, stop, thread.is_alive)
     except Exception:                                       # sem Tk: mantém o servidor até a thread terminar
         traceback.print_exc()
         thread.join()

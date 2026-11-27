@@ -6,12 +6,13 @@ import cmath
 import math
 import contextlib
 import re
+import signal
 import sys
 import uuid
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
@@ -50,6 +51,29 @@ app = FastAPI(title="Eclipse", version=__version__, lifespan=lifespan)
 async def api_version() -> dict:
     """Versão do Eclipse servida por este backend (o Sobre compara com a do frontend)."""
     return {"version": __version__}
+
+
+# Encerramento pedido pela janela do inicializador (launcher.py). O cabeçalho próprio obriga o navegador a fazer preflight CORS,
+# então páginas de outras origens não conseguem chamar a rota. Com o servidor dentro do executável, o launcher registra
+# `shutdown_hook`; no uvicorn de linha de comando (run.ps1) o SIGINT faz o mesmo que Ctrl+C.
+SHUTDOWN_HEADER = "x-eclipse-launcher"
+shutdown_hook = None
+
+
+def _do_shutdown() -> None:
+    if shutdown_hook is not None:
+        shutdown_hook()
+    else:
+        signal.raise_signal(signal.SIGINT)
+
+
+@app.post("/api/shutdown")
+async def api_shutdown(request: Request) -> dict:
+    """Encerra o servidor local (usado pelo botão Encerrar do inicializador)."""
+    if request.headers.get(SHUTDOWN_HEADER) != "1":
+        raise HTTPException(403, "Encerramento permitido só pelo inicializador do Eclipse.")
+    asyncio.get_running_loop().call_later(0.2, _do_shutdown)
+    return {"ok": True}
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
 
