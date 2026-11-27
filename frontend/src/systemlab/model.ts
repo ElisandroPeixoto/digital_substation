@@ -33,6 +33,8 @@ export interface El {
   text?: string
   scPos?: { x: number; y: number }
   scOpen?: boolean
+  /** IED: oculta da tela o painel flutuante de comandos DNP3 (os atalhos continuam configurados). */
+  scHide?: boolean
 }
 
 /** Elementos de comunicação (não participam do cálculo elétrico). */
@@ -77,6 +79,78 @@ export interface Field {
   options?: { v: number; l: string }[]
   /** Mostra o campo só quando o parâmetro `key` vale `v` (ex.: modo de impedância da fonte). */
   when?: { key: string; v: number }
+  /** Valor exibido calculado a partir dos parâmetros guardados (ex.: S e FP da carga a partir de P e Q). */
+  get?: (el: El) => number | boolean
+  /** Parâmetros gravados ao editar o campo (ex.: S → P e Q); sem `put` grava `key` direto. */
+  put?: (el: El, v: number | boolean) => Params
+}
+
+/** Arredonda para exibição (6 algarismos significativos); os parâmetros convertidos são gravados com precisão total. */
+const r6 = (x: number): number => (Number.isFinite(x) ? Number(x.toPrecision(6)) : 0)
+const DEG = Math.PI / 180
+
+// ---- Carga: P/Q (MW, Mvar com sinal: + indutiva, − capacitiva) ↔ S/FP. Guardados: p e q (o solver usa esses dois);
+//      fp e cap acompanham para não perder o fator de potência quando S = 0. Diagramas antigos (só p, fp, cap) seguem valendo.
+export function loadPQ(el: El): { p: number; q: number } {
+  const p = Math.max(num(el, 'p'), 0)
+  if (typeof el.p.q === 'number' && Number.isFinite(el.p.q)) return { p, q: el.p.q }
+  const fp = Math.min(1, Math.max(num(el, 'fp'), 1e-3))
+  return { p, q: p * Math.tan(Math.acos(fp)) * (flag(el, 'cap') ? -1 : 1) }
+}
+function loadView(el: El) {
+  const { p, q } = loadPQ(el)
+  const s = Math.hypot(p, q)
+  const fp = s > 1e-12 ? p / s : Math.min(1, Math.max(num(el, 'fp'), 0))
+  const cap = q < 0 ? true : q > 0 ? false : flag(el, 'cap')
+  return { p, q, s, fp, cap }
+}
+const loadWrite = (p: number, q: number, fp: number, cap: boolean): Params => {
+  const s = Math.hypot(p, q)
+  return { p, q, fp: s > 1e-12 ? p / s : fp, cap: q < 0 || (q === 0 && cap) }
+}
+function loadFromS(s: number, fp: number, cap: boolean): Params {
+  const f = Math.min(1, Math.max(fp, 0))
+  return loadWrite(s * f, s * Math.sqrt(1 - f * f) * (cap ? -1 : 1), f, cap)
+}
+
+// ---- Linha: R/X (Ω/km) ↔ |Z| e ângulo (Ω/km, °). Guardados: r1, x1, r0, x0 (o solver usa esses); a1/a0 guardam o ângulo quando |Z| = 0.
+const lineZ = (el: El, s: '1' | '0') => {
+  const r = num(el, `r${s}`), x = num(el, `x${s}`)
+  const z = Math.hypot(r, x)
+  return { z, a: z > 1e-12 ? Math.atan2(x, r) / DEG : num(el, `a${s}`) }
+}
+const lineWrite = (s: '1' | '0', z: number, a: number): Params => {
+  const ang = Math.min(90, Math.max(0, a))
+  const tidy = (v: number) => (Math.abs(v) < 1e-12 ? 0 : v)            // cos 90° e sin 0° não deixam resíduo (7e-17)
+  return { [`r${s}`]: tidy(Math.max(z, 0) * Math.cos(ang * DEG)), [`x${s}`]: tidy(Math.max(z, 0) * Math.sin(ang * DEG)), [`a${s}`]: ang }
+}
+
+// ---- Fonte: ao trocar o modo de impedância, os campos do novo modo recebem os valores equivalentes aos do modo anterior
+//      (mesmas equações do solver, em Ω na tensão nominal da fonte, percentual de 100 %).
+function sourceSwitch(el: El, mode: number): Params {
+  const old = num(el, 'zmode')
+  if (mode === old) return { zmode: mode }
+  const vkv = Math.max(num(el, 'vkv'), 1e-6)
+  const E = vkv / Math.sqrt(3)                                     // kV fase-neutro (kV/Ω = kA)
+  if (mode === 1) {                                                // Ssc, X/R → Isc
+    const zm = (vkv * vkv) / Math.max(num(el, 'ssc'), 1e-6)
+    const th = Math.atan(Math.max(num(el, 'xr'), 0))
+    const r1 = zm * Math.cos(th), x1 = zm * Math.sin(th)
+    const legacy = el.p.r0r1 == null && el.p.x0x1 == null && typeof el.p.z0r === 'number'
+    const r0 = r1 * (legacy ? (el.p.z0r as number) : Math.max(num(el, 'r0r1'), 0))
+    const x0 = x1 * (legacy ? (el.p.z0r as number) : Math.max(num(el, 'x0x1'), 0))
+    const zr = 2 * r1 + r0, zx = 2 * x1 + x0
+    return { zmode: 1, isc3: E / zm, isc3ang: -th / DEG, isc1: (3 * E) / Math.max(Math.hypot(zr, zx), 1e-9), isc1ang: -Math.atan2(zx, zr) / DEG }
+  }
+  // Isc → Ssc, X/R: Z1 = E / I3φ ; Z0 = 3E / I1φ − 2·Z1
+  const i3 = Math.max(num(el, 'isc3'), 1e-6), t3 = num(el, 'isc3ang') * DEG
+  const i1 = Math.max(num(el, 'isc1'), 1e-6), t1 = num(el, 'isc1ang') * DEG
+  const z1m = E / i3, r1 = z1m * Math.cos(-t3), x1 = z1m * Math.sin(-t3)
+  const z0m = (3 * E) / i1, r0 = z0m * Math.cos(-t1) - 2 * r1, x0 = z0m * Math.sin(-t1) - 2 * x1
+  return {
+    zmode: 0, ssc: (vkv * vkv) / z1m, xr: r1 > 1e-12 ? Math.max(x1, 0) / r1 : 999,
+    r0r1: r1 > 1e-12 ? Math.max(r0 / r1, 0) : 1, x0x1: x1 > 1e-12 ? Math.max(x0 / x1, 0) : 1,
+  }
 }
 
 /** Tipos de falta (valor guardado em `type` do elemento Falta). */
@@ -142,10 +216,11 @@ export const KINDS: Record<Kind, KindInfo> = {
     fields: [
       { key: 'vkv', label: 'Tensão nominal (fase-fase)', unit: 'kV', type: 'number', min: 0 },
       { key: 'ang', label: 'Ângulo da tensão', unit: '°', type: 'number' },
-      { key: 'freq', label: 'Frequência (vazio/0 = nominal do sistema)', unit: 'Hz', type: 'number', min: 0 },
+      { key: 'freq', label: 'Frequência', type: 'number', min: 0 },
       { key: 'gnd', label: 'Neutro aterrado', type: 'bool' },
-      { key: 'pct', label: 'Percentual da fonte (0 a 1000 %; 100 % = parametrizado)', unit: '%', type: 'number', min: 0, max: 1000 },
-      { key: 'zmode', label: 'Impedância da fonte', type: 'select', options: [{ v: 0, l: 'Potência de curto e relações X/R' }, { v: 1, l: 'Isc máx (trifásica e monofásica)' }] },
+      { key: 'pct', label: 'Percentual da fonte (0 a 1000)', type: 'number', min: 0, max: 1000 },
+      { key: 'zmode', label: 'Impedância da fonte', type: 'select', options: [{ v: 0, l: 'Potência de curto e relações X/R' }, { v: 1, l: 'Isc máx (trifásica e monofásica)' }],
+        put: (el, v) => sourceSwitch(el, Number(v)) },
       { key: 'ssc', label: 'Potência de curto-circuito', unit: 'MVA', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
       { key: 'xr', label: 'X1/R1', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
       { key: 'r0r1', label: 'R0/R1', type: 'number', min: 0, when: { key: 'zmode', v: 0 } },
@@ -214,11 +289,19 @@ export const KINDS: Record<Kind, KindInfo> = {
   load: {
     label: 'Carga',
     prefix: 'CG',
-    defaults: { p: 10, fp: 0.92, cap: false },
+    defaults: { p: 10, fp: 0.92, cap: false, lmode: 0 },
     fields: [
-      { key: 'p', label: 'Potência ativa', unit: 'MW', type: 'number', min: 0 },
-      { key: 'fp', label: 'Fator de potência', type: 'number', min: 0 },
-      { key: 'cap', label: 'Capacitiva (adiantada)', type: 'bool' },
+      { key: 'lmode', label: 'Ajuste da potência', type: 'select', options: [{ v: 0, l: 'P e Q nominais' }, { v: 1, l: 'S e fator de potência' }] },
+      { key: 'p', label: 'Potência ativa P', unit: 'MW', type: 'number', min: 0, when: { key: 'lmode', v: 0 },
+        get: (el) => r6(loadView(el).p), put: (el, v) => { const w = loadView(el); return loadWrite(Math.max(Number(v), 0), w.q, w.fp, w.cap) } },
+      { key: 'q', label: 'Potência reativa Q (+ indutiva / − capacitiva)', unit: 'Mvar', type: 'number', when: { key: 'lmode', v: 0 },
+        get: (el) => r6(loadView(el).q), put: (el, v) => { const w = loadView(el); return loadWrite(w.p, Number(v), w.fp, w.cap) } },
+      { key: 's', label: 'Potência aparente S', unit: 'MVA', type: 'number', min: 0, when: { key: 'lmode', v: 1 },
+        get: (el) => r6(loadView(el).s), put: (el, v) => { const w = loadView(el); return loadFromS(Math.max(Number(v), 0), w.fp, w.cap) } },
+      { key: 'fp', label: 'Fator de potência', type: 'number', min: 0, max: 1, when: { key: 'lmode', v: 1 },
+        get: (el) => r6(loadView(el).fp), put: (el, v) => { const w = loadView(el); return loadFromS(w.s, Number(v), w.cap) } },
+      { key: 'cap', label: 'Capacitiva (adiantada)', type: 'bool', when: { key: 'lmode', v: 1 },
+        get: (el) => loadView(el).cap, put: (el, v) => { const w = loadView(el); return loadFromS(w.s, w.fp, v === true) } },
     ],
   },
   tp: {
@@ -271,13 +354,22 @@ export const KINDS: Record<Kind, KindInfo> = {
   line: {
     label: 'Linha',
     prefix: 'LT',
-    defaults: { len: 20, r1: 0.1, x1: 0.4, r0: 0.3, x0: 1.2 },
+    defaults: { len: 20, r1: 0.1, x1: 0.4, r0: 0.3, x0: 1.2, zm: 0 },
     fields: [
       { key: 'len', label: 'Comprimento', unit: 'km', type: 'number', min: 0.001 },
-      { key: 'r1', label: 'Resistência R (seq. + e −)', unit: 'Ω/km', type: 'number', min: 0 },
-      { key: 'x1', label: 'Reatância indutiva Xl (seq. + e −)', unit: 'Ω/km', type: 'number', min: 0 },
-      { key: 'r0', label: 'Resistência R0 (seq. zero)', unit: 'Ω/km', type: 'number', min: 0 },
-      { key: 'x0', label: 'Reatância Xl0 (seq. zero)', unit: 'Ω/km', type: 'number', min: 0 },
+      { key: 'zm', label: 'Ajuste da impedância', type: 'select', options: [{ v: 0, l: 'Resistência e reatância (Ω/km)' }, { v: 1, l: 'Z1 e Z0: módulo (Ω/km) e ângulo (°)' }] },
+      { key: 'r1', label: 'Resistência R (seq. + e −)', unit: 'Ω/km', type: 'number', min: 0, when: { key: 'zm', v: 0 } },
+      { key: 'x1', label: 'Reatância indutiva Xl (seq. + e −)', unit: 'Ω/km', type: 'number', min: 0, when: { key: 'zm', v: 0 } },
+      { key: 'r0', label: 'Resistência R0 (seq. zero)', unit: 'Ω/km', type: 'number', min: 0, when: { key: 'zm', v: 0 } },
+      { key: 'x0', label: 'Reatância Xl0 (seq. zero)', unit: 'Ω/km', type: 'number', min: 0, when: { key: 'zm', v: 0 } },
+      { key: 'z1', label: 'Z1 – módulo (seq. + e −)', unit: 'Ω/km', type: 'number', min: 0, when: { key: 'zm', v: 1 },
+        get: (el) => r6(lineZ(el, '1').z), put: (el, v) => lineWrite('1', Number(v), lineZ(el, '1').a) },
+      { key: 'a1', label: 'Z1 – ângulo', unit: '°', type: 'number', min: 0, max: 90, when: { key: 'zm', v: 1 },
+        get: (el) => r6(lineZ(el, '1').a), put: (el, v) => lineWrite('1', lineZ(el, '1').z, Number(v)) },
+      { key: 'z0', label: 'Z0 – módulo (seq. zero)', unit: 'Ω/km', type: 'number', min: 0, when: { key: 'zm', v: 1 },
+        get: (el) => r6(lineZ(el, '0').z), put: (el, v) => lineWrite('0', Number(v), lineZ(el, '0').a) },
+      { key: 'a0', label: 'Z0 – ângulo', unit: '°', type: 'number', min: 0, max: 90, when: { key: 'zm', v: 1 },
+        get: (el) => r6(lineZ(el, '0').a), put: (el, v) => lineWrite('0', lineZ(el, '0').z, Number(v)) },
     ],
   },
   fault: {

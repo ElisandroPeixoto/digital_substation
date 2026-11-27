@@ -5,7 +5,7 @@ import { simTime, usePrefs } from '../prefs'
 import type { SessionBrief } from '../types'
 import {
   BUS_MAX_CELLS, FAULT_TYPES, GRID, KINDS, TP_PHASES, tpPhase, tpTag, KIND_ORDER, busCells, flag, hitRect, isBar, isComm, makeElement, num, rotate, worldPorts,
-  type Diagram, type El, type Kind, type PortRef, DEFAULT_TITLE } from './model'
+  type Diagram, type El, type Field, type Kind, type PortRef, DEFAULT_TITLE } from './model'
 import { DEFAULT_FNOM, DEFAULT_SBASE, solve, sourceFreq, type ElResult, type FaultStudy, type Ph, type PhasorSet } from './solver'
 import { ElementSymbol, SymbolShape } from './symbols'
 import { ShortcutEditor, ShortcutPanel } from './Shortcuts'
@@ -411,10 +411,13 @@ function valueLinesRaw(el: El, r: ElResult | undefined): string[] {
 }
 
 // ------------------------------------------------------------------ campo numérico
-function NumInput({ value, onChange }: { value: number; onChange: (n: number) => void }) {
-  const [txt, setTxt] = useState(String(value))
+/** Texto exibido no campo numérico: até 6 algarismos significativos (valores convertidos entre modos não mostram 9,99999…). */
+const numTxt = (v: number) => (Number.isFinite(v) ? String(Number(v.toPrecision(6))) : '0')
+
+function NumInput({ value, onChange, max }: { value: number; onChange: (n: number) => void; max?: number }) {
+  const [txt, setTxt] = useState(numTxt(value))
   const [focus, setFocus] = useState(false)
-  useEffect(() => { if (!focus) setTxt(String(value)) }, [value, focus])
+  useEffect(() => { if (!focus) setTxt(numTxt(value)) }, [value, focus])
   return (
     <input
       type="text"
@@ -424,13 +427,18 @@ function NumInput({ value, onChange }: { value: number; onChange: (n: number) =>
       onFocus={() => setFocus(true)}
       onBlur={() => setFocus(false)}
       onChange={(e) => {
-        setTxt(e.target.value)
         const n = Number(e.target.value.replace(',', '.'))
+        if (max != null && Number.isFinite(n) && n > max) { setTxt(String(max)); onChange(max); return }   // não aceita valor acima do máximo
+        setTxt(e.target.value)
         if (e.target.value.trim() !== '' && Number.isFinite(n)) onChange(n)
       }}
     />
   )
 }
+
+/** Largura da janela de propriedades e resultados (px): arrastável pela borda esquerda, entre estes limites. */
+const SIDE_MIN = 300
+const SIDE_MAX = 560
 
 // ------------------------------------------------------------------ app
 export function SystemLabApp() {
@@ -467,6 +475,15 @@ export function SystemLabApp() {
   const touched = useRef(false)                                                // só mexe nos relés depois de o usuário usar Play/Pause
   const [sessions, setSessions] = useState<SessionBrief[]>([])      // relés do DigitalRelay (para os elementos IED)
   const [iecIeds, setIecIeds] = useState<string[]>([])               // IEDs do projeto IEC61850
+  const [sideW, setSideW] = useState<number>(() => {
+    const n = Number(localStorage.getItem('systemlab.sideW'))
+    return Number.isFinite(n) && n > 0 ? Math.min(SIDE_MAX, Math.max(SIDE_MIN, n)) : 330
+  })
+  useEffect(() => { try { localStorage.setItem('systemlab.sideW', String(sideW)) } catch { /* ignora */ } }, [sideW])
+  const sideDrag = useRef<{ x: number; w: number } | null>(null)
+  // textos explicativos da janela lateral: ocultos; o botão "Detalhes" (Ações) mostra
+  const [hints, setHints] = useState<boolean>(() => localStorage.getItem('systemlab.hints') === '1')
+  const toggleHints = () => setHints((h) => { try { localStorage.setItem('systemlab.hints', h ? '0' : '1') } catch { /* ignora */ } return !h })
   const [panels, setPanels] = useState<{ tools: boolean; side: boolean }>(() => {
     try { return { tools: true, side: true, ...JSON.parse(localStorage.getItem('systemlab.panels') ?? '{}') } } catch { return { tools: true, side: true } }
   })
@@ -581,6 +598,10 @@ export function SystemLabApp() {
   const updateEl = useCallback((id: number, f: (e: El) => El) => {
     setDg((d) => ({ ...d, els: d.els.map((e) => (e.id === id ? f(e) : e)) }))
   }, [])
+  /** Grava um campo das propriedades: com `put`, o campo converte para os parâmetros guardados (ex.: S/FP → P/Q da carga). */
+  const setField = useCallback((id: number, f: Field, v: number | boolean) => {
+    updateEl(id, (x) => ({ ...x, p: { ...x.p, ...(f.put ? f.put(x, v) : { [f.key]: v }) } }))
+  }, [updateEl])
 
   const connect = useCallback((a: PortRef, b: PortRef) => {
     if (a[0] === b[0]) return
@@ -658,7 +679,7 @@ export function SystemLabApp() {
         while (taken.some((x) => x.name === `${prefix}${k}`)) k++
         const copy: El = { ...e, id: map.get(e.id)!, x: e.x + dx, y: e.y + dy, name: `${prefix}${k}`, p: { ...e.p } }
         if (e.kind === 'ied') {
-          delete copy.sid; delete copy.rname; delete copy.sc; delete copy.scPos; delete copy.scOpen
+          delete copy.sid; delete copy.rname; delete copy.sc; delete copy.scPos; delete copy.scOpen; delete copy.scHide
           if (e.links) {
             const links: NonNullable<El['links']> = {}
             for (const key of ['breaker', 'tc', 'tc2', 'tc3', 'tp', 'tps'] as const) { const v = e.links[key]; if (v != null && map.has(v)) links[key] = map.get(v) }
@@ -1105,7 +1126,7 @@ export function SystemLabApp() {
   const setHide = (hide: boolean) => setDg((d) => ({ ...d, els: d.els.map((e) => (selIds.has(e.id) ? { ...e, hide } : e)) }))
 
   return (
-    <div className="sl" style={{ ['--sl-l' as string]: panels.tools ? '180px' : '34px', ['--sl-r' as string]: panels.side ? '330px' : '34px' }}>
+    <div className="sl" style={{ ['--sl-l' as string]: panels.tools ? '180px' : '34px', ['--sl-r' as string]: panels.side ? `${sideW}px` : '34px' }}>
       {/* ---------------------------------------------------------- toolbox */}
       <aside className={`sl-tools ${panels.tools ? '' : 'collapsed'}`}>
         <button className="sl-collapse" onClick={() => togglePanel('tools')} title={panels.tools ? 'Recolher elementos (E)' : 'Expandir elementos (E)'} aria-expanded={panels.tools}>
@@ -1338,7 +1359,7 @@ export function SystemLabApp() {
             </div>
           </div>
         )}
-        {dg.els.filter((x) => x.kind === 'ied' && x.sid && (x.sc?.length ?? 0) > 0).map((x) => (
+        {dg.els.filter((x) => x.kind === 'ied' && x.sid && !x.scHide && (x.sc?.length ?? 0) > 0).map((x) => (
           <ShortcutPanel key={x.id} el={x}
             onMove={(px, py) => updateEl(x.id, (y) => ({ ...y, scPos: { x: px, y: py } }))}
             onToggle={(o) => updateEl(x.id, (y) => ({ ...y, scOpen: o }))} />
@@ -1347,7 +1368,14 @@ export function SystemLabApp() {
       </section>
 
       {/* ---------------------------------------------------------- propriedades */}
-      <aside className={`sl-side ${panels.side ? '' : 'collapsed'}`}>
+      <aside className={`sl-side ${panels.side ? '' : 'collapsed'} ${hints ? 'hints-on' : ''}`}>
+        {panels.side && (
+          <div className="sl-resize" title="Arraste para alargar ou estreitar · duplo clique = largura padrão"
+            onPointerDown={(e) => { e.preventDefault(); sideDrag.current = { x: e.clientX, w: sideW }; e.currentTarget.setPointerCapture(e.pointerId) }}
+            onPointerMove={(e) => { const d = sideDrag.current; if (d) setSideW(Math.min(SIDE_MAX, Math.max(SIDE_MIN, d.w + d.x - e.clientX))) }}
+            onPointerUp={(e) => { sideDrag.current = null; e.currentTarget.releasePointerCapture(e.pointerId) }}
+            onDoubleClick={() => setSideW(330)} />
+        )}
         <button className="sl-collapse" onClick={() => togglePanel('side')} title={panels.side ? 'Recolher propriedades (R)' : 'Expandir propriedades (R)'} aria-expanded={panels.side}>
           {panels.side ? '▶' : '◀'}
         </button>
@@ -1367,15 +1395,17 @@ export function SystemLabApp() {
               <label key={f.key} className="sl-field">
                 <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
                 {f.type === 'bool' ? (
-                  <input type="checkbox" checked={flag(selEl, f.key)} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: e.target.checked } }))} />
+                  <input type="checkbox" checked={f.get ? f.get(selEl) === true : flag(selEl, f.key)} onChange={(e) => setField(selEl.id, f, e.target.checked)} />
                 ) : f.type === 'select' ? (
-                  <select className="numinput" value={num(selEl, f.key)} onChange={(e) => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: Number(e.target.value) } }))}>
+                  <select className="numinput" value={num(selEl, f.key)} onChange={(e) => setField(selEl.id, f, Number(e.target.value))}>
                     {f.options!.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
                   </select>
                 ) : (
-                  <NumInput key={`${selEl.id}-${f.key}-${cfg.fnom}`} value={selEl.kind === 'source' && f.key === 'freq' ? sourceFreq(selEl, cfg.fnom) : num(selEl, f.key)} onChange={(n) => (isBar(selEl.kind) && f.key === 'cells'
-                    ? setDg((g) => resizeBus(g, selEl.id, n, 'hi'))
-                    : updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, [f.key]: Math.min(f.max ?? Infinity, f.min != null ? Math.max(f.min, n) : n) } })))} />
+                  <NumInput key={`${selEl.id}-${f.key}-${cfg.fnom}`} max={f.max}
+                    value={selEl.kind === 'source' && f.key === 'freq' ? sourceFreq(selEl, cfg.fnom) : f.get ? Number(f.get(selEl)) : num(selEl, f.key)}
+                    onChange={(n) => (isBar(selEl.kind) && f.key === 'cells'
+                      ? setDg((g) => resizeBus(g, selEl.id, n, 'hi'))
+                      : setField(selEl.id, f, Math.min(f.max ?? Infinity, f.min != null ? Math.max(f.min, n) : n)))} />
                 )}
               </label>
             ))}
@@ -1451,8 +1481,14 @@ export function SystemLabApp() {
                 {selEl.kind === 'tc' && (
                   <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, p: { ...x.p, pol: num(x, 'pol') ? 0 : 1 } }))} title="Troca o lado da marca de polaridade (●) sem mexer no desenho; as correntes enviadas ao relé giram 180°"><span className="ic">⇄</span><span>Inverter polaridade</span></button>
                 )}
+                {selEl.kind === 'ied' && selEl.sid && (selEl.sc?.length ?? 0) > 0 && (
+                  <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, scHide: !x.scHide }))} title="Mostra ou oculta na tela o painel flutuante de comandos DNP3 deste IED (os atalhos continuam configurados)">
+                    <span className="ic"><EyeIcon off={!selEl.scHide} /></span><span>{selEl.scHide ? 'Mostrar comandos DNP3' : 'Ocultar comandos DNP3'}</span>
+                  </button>
+                )}
                 {selEl.kind !== 'text' && <button onClick={() => updateEl(selEl.id, (x) => ({ ...x, hide: !x.hide }))} title={selEl.kind === 'ied' ? 'Mostra ou oculta os dados à direita do IED (o nome continua visível)' : 'Mostra ou oculta o nome e os dados deste elemento no diagrama'}><span className="ic"><EyeIcon off={!selEl.hide} /></span><span>{selEl.hide ? 'Mostrar dados' : 'Ocultar dados'}</span></button>}
                 {selEl.kind !== 'text' && <button onClick={rotateSel}><span className="ic">↻</span><span>Girar (Shift+R)</span></button>}
+                <button className={hints ? 'active' : ''} onClick={toggleHints} title="Mostra ou oculta os textos explicativos desta janela"><span className="ic">ⓘ</span><span>Detalhes</span></button>
                 <button className="danger" onClick={removeSel}><span className="ic"><TrashIcon /></span><span>Excluir</span></button>
               </div>
             </div>
@@ -1485,7 +1521,7 @@ export function SystemLabApp() {
             </div>
           </>
         ) : (
-          <Summary dg={dg} sol={sol} onSelect={(id) => setSel({ type: 'el', ids: [id] })}
+          <Summary dg={dg} sol={sol} onSelect={(id) => setSel({ type: 'el', ids: [id] })} hints={hints} onHints={toggleHints}
             relays={dg.els.filter((e) => e.kind === 'ied' && e.sid && sessions.some((x) => x.id === e.sid)).map((e) => ({ sid: e.sid!, name: e.name }))} />
         )}
       </aside>
@@ -1780,7 +1816,7 @@ function Results({ el, r }: { el: El; r: ElResult | undefined }) {
   )
 }
 
-function Summary({ dg, sol, onSelect, relays }: { dg: Diagram; sol: ReturnType<typeof solve>; onSelect: (id: number) => void; relays: { sid: string; name: string }[] }) {
+function Summary({ dg, sol, onSelect, relays, hints, onHints }: { dg: Diagram; sol: ReturnType<typeof solve>; onSelect: (id: number) => void; relays: { sid: string; name: string }[]; hints: boolean; onHints: () => void }) {
   const rows = (kind: Kind) => dg.els.filter((e) => e.kind === kind)
   const t = sol.totals
   const [serMsg, setSerMsg] = useState<string | null>(null)
@@ -1851,14 +1887,15 @@ function Summary({ dg, sol, onSelect, relays }: { dg: Diagram; sol: ReturnType<t
         Selecione um elemento para editar os parâmetros e ver os resultados.
       </p>
       <div className="sl-actions">
-        <h4>Atalhos</h4>
+        <h4>Ações</h4>
         <div className="row wrap">
+          <button className={hints ? 'active' : ''} onClick={onHints} title="Mostra ou oculta os textos explicativos desta janela">ⓘ Detalhes</button>
           <button onClick={clearSer} disabled={relays.length === 0}
             title={relays.length ? `Apaga os eventos do SER de: ${relays.map((x) => x.name).join(', ')}` : 'Associe um IED a um relé do DigitalRelay para usar esta opção'}>
             🧹 Limpar SER dos relés{relays.length ? ` (${relays.length})` : ''}
           </button>
         </div>
-        {serMsg && <p className="hint">{serMsg}</p>}
+        {serMsg && <p className="hint keep">{serMsg}</p>}
       </div>
     </>
   )

@@ -383,7 +383,10 @@ td.files { background: var(--soft); }
 .sl { display: grid; grid-template-columns: var(--sl-l, 180px) minmax(0, 1fr) var(--sl-r, 330px); height: calc(100vh - 52px); min-height: 480px; }
 .sl-tools, .sl-side { background: var(--panel); padding: 12px; overflow-y: auto; }
 .sl-tools { border-right: 1px solid var(--line); }
-.sl-side { border-left: 1px solid var(--line); }
+.sl-side { border-left: 1px solid var(--line); position: relative; }
+.sl-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 2; touch-action: none; user-select: none; }
+.sl-resize:hover, .sl-resize:active { background: var(--accent); opacity: 0.35; }
+.sl-side:not(.hints-on) .hint:not(.warn):not(.keep) { display: none; }
 .sl-tools h3, .sl-side h3 { margin: 0 0 10px; font-size: 14px; }
 .sl-tool { display: flex; align-items: center; gap: 8px; padding: 4px 8px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: grab; user-select: none; }
 .sl-tool:hover { border-color: var(--accent); }

@@ -42,9 +42,8 @@ Os nomes são gerados automaticamente (`DJ1`, `DJ2`, …) e podem ser editados n
 | | Impedância (%) | 8 |
 | | Relação X/R | 10 |
 | Barramento | Comprimento (células de 20 px; arredondado para par, 2 a 40) | 8 |
-| Carga | Potência ativa (MW) | 10 |
-| | Fator de potência | 0,92 |
-| | Capacitiva (adiantada) | não (indutiva) |
+| Carga | Ajuste da potência: *P e Q nominais* (MW, Mvar; Q negativo = capacitiva) ou *S e fator de potência* (MVA, FP, capacitiva) | P e Q |
+| | Potência ativa (MW) / Fator de potência | 10 / 0,92 indutivo (Q ≈ 4,26 Mvar) |
 | TP | Primário fase-fase (kV) / Secundário fase-fase (V) | 13,8 / 115 |
 | TC | Primário (A) / Secundário (A) | 600 / 5 |
 
@@ -149,8 +148,11 @@ Elementos energizados são desenhados em azul; desenergizados, em cinza.
   corrente (A ∠°), P (MW) e Q (Mvar) por terminal, mais: relação e tensão secundária (TP), relação e corrente secundária (TC),
   carregamento e perdas (transformador). Convenção: nos elementos de dois terminais, as grandezas são positivas **entrando no
   elemento**; a P do terminal 1 é o fluxo do terminal 1 para o 2. A **chave seccionadora não mostra a tabela de resultados**.
-- **Sem seleção:** **Resumo do sistema** com geração, carga e perdas dos transformadores, lista de barramentos (clicável) e
-  medições (TC e TP).
+- **Sem seleção:** **Resumo do sistema** com geração, carga e perdas dos transformadores, lista de barramentos (clicável),
+  medições (TC e TP) e **Ações** (Detalhes, Limpar SER dos relés).
+- **Textos explicativos** da janela ficam **ocultos**; o botão **Detalhes** (nas Ações do elemento e do Resumo) mostra ou oculta
+  (`localStorage` `systemlab.hints`). Avisos (⚠) aparecem sempre.
+- **Largura:** a janela é esticável pela borda esquerda, de 300 a 560 px (duplo clique na borda = 330 px; `localStorage` `systemlab.sideW`).
 
 ## Modelo de cálculo (`solver.ts`)
 
@@ -167,8 +169,9 @@ Regime permanente **trifásico equilibrado**, em **por unidade**, com **Sbase = 
    - **Transformador:** impedância série `Z = (z%/100)·(SBASE/Sn)·(V1/Vbase₁)²`, X/R informado. Sem derivação (tap): a relação é a
      nominal. Para o transformador, os terminais 1 e 2 correspondem a V1 e V2.
    - **Disjuntor/Seccionadora fechados e TC:** admitância muito alta (`1e4` pu, Z = 10⁻⁴ pu); **abertos**: ramo inexistente.
-   - **Carga:** **impedância constante** calculada na **tensão nominal da zona**: `y = conj((P + jQ)/SBASE)`, com
-     `Q = P·tan(acos(FP))` (negativo se capacitiva). Por isso a potência real cai com o quadrado da tensão.
+   - **Carga:** **impedância constante** calculada na **tensão nominal da zona**: `y = conj((P + jQ)/SBASE)`, com P e Q
+     guardados (`loadPQ`; diagramas antigos com só P, FP e capacitiva usam `Q = P·tan(acos(FP))`, negativo se capacitiva).
+     Por isso a potência real cai com o quadrado da tensão.
    - **TP:** não influencia o sistema (apenas mede).
 4. **Energização:** só são resolvidos os conjuntos de nós ligados (por ramos fechados) a pelo menos uma fonte; o resto fica com
    tensão zero e aparece como **desenergizado**. Com várias fontes, o ângulo de cada uma é respeitado (a primeira define a base de tensão
@@ -222,7 +225,7 @@ Com um relé associado ao IED, a seção **Atalhos na tela (mapa DNP3)** das pro
 - **Valor binário (BI):** lâmpada com 0/1 do ponto.
 - **Medida (AI):** valor do ponto, com unidade sugerida.
 
-Os valores são lidos do mapa a cada 0,7 s. Rótulos são editáveis (padrão = descrição do ponto) e a ordem pode ser alterada (▲▼). Se o mapa DNP3 do relé for trocado e o índice passar a apontar para outro bit, o atalho fica inativo (`–`). Os atalhos ficam salvos no diagrama (`systemlab.diagram`).
+Os valores são lidos do mapa a cada 0,7 s. Rótulos são editáveis (padrão = descrição do ponto) e a ordem pode ser alterada (▲▼). Se o mapa DNP3 do relé for trocado e o índice passar a apontar para outro bit, o atalho fica inativo (`–`). Os atalhos ficam salvos no diagrama (`systemlab.diagram`). Nas **Ações** do IED, **Ocultar comandos DNP3** tira o painel flutuante da tela sem apagar os atalhos (`El.scHide`); **Mostrar comandos DNP3** traz de volta.
 
 ## Transformador de 3 enrolamentos
 
@@ -231,7 +234,7 @@ Elemento com **três terminais**: 1 = **P** (primário), à esquerda; 2 = **S** 
 Modelo: as impedâncias dos três enrolamentos vêm do equivalente em estrela (Zp = (Zps + Zpt − Zst)/2, e analogamente Zs e Zt; Zs ou Zt podem sair ≈ 0 ou negativos, como no transformador real) convertido para delta entre os terminais, com a defasagem de cada par dada pelos índices horários do esquema (S e T em relação a P). Vale no regime normal e na falta. Sequência zero: enrolamento **Y aterrado** liga o terminal ao ponto comum pela impedância do enrolamento; **Δ** aterra o ponto comum (fecha a malha); **Y isolado** não conduz. O resultado mostra tensão, corrente e potência dos três terminais, o carregamento de P e as perdas.
 ## Linha
 
-Elemento de dois terminais com **comprimento (km)** e **impedância por km**: **R** e **Xl** de sequência positiva/negativa (Ω/km) e **R0/Xl0** de sequência zero (usados nas faltas à terra). A impedância total é comprimento × impedância por km (convertida para pu na tensão de base do trecho); não há capacitância shunt. Nas propriedades aparecem a impedância total, as perdas e as grandezas de cada terminal.
+Elemento de dois terminais com **comprimento (km)** e **impedância por km**: **R** e **Xl** de sequência positiva/negativa (Ω/km) e **R0/Xl0** de sequência zero (usados nas faltas à terra). O campo **Ajuste da impedância** troca para **Z1 e Z0 em módulo (Ω/km) e ângulo (0 a 90°)**; os dois modos mostram valores equivalentes (o diagrama guarda R/X). A impedância total é comprimento × impedância por km (convertida para pu na tensão de base do trecho); não há capacitância shunt. Nas propriedades aparecem a impedância total, as perdas e as grandezas de cada terminal.
 
 **Falta em um ponto da linha:** a linha tem três pontos de conexão: os dois extremos e um **ponto central (no topo do símbolo)**. Ligue o terminal da **Falta** ao ponto central: o sistema detecta a ligação e, nas propriedades da Falta, aparecem a **Linha conectada** e a **Posição na linha (0 a 100 %)**, contada a partir do terminal 1 (ex.: 10 %, 50 %). Sem essa ligação o campo de posição não aparece e a falta vale no ponto ligado. A linha é dividida em dois trechos (p·Z e (1−p)·Z, nas sequências positiva, negativa e zero) e a falta é aplicada no nó entre eles. O painel "Em falta" mostra o ponto (ex.: "A-N a 30 % de LT1"), as impedâncias de Thévenin e as correntes/tensões nos terminais da linha.
 ## Faltas (curto-circuito)
@@ -300,11 +303,13 @@ No **IED**, **TP (tensões)** alimenta VA/VB/VC do relé: TP trifásico entrega 
 
 **Modelo do IED:** o elemento IED tem o seletor de modelo (SEL-751, SEL-787 ou SEL-2440); a lista de relés mostra só os do modelo escolhido (trocar o modelo desassocia um relé de outro modelo). No SEL-787 o IED aceita até 3 TCs (W1, W2 e W3), que alimentam as correntes dos enrolamentos 1 a 3 do relé (injeção `ia_*`, `w2ia_*`, `w3ia_*`); o disjuntor monitorado continua sendo o do W1. O SEL-2440 não tem entradas analógicas, então só mostra a associação do relé, o IED 61850 e os atalhos.
 
-**Impedância da fonte CA:** campo "Impedância da fonte" escolhe o modo. (0) Potência de curto-circuito (MVA) e relações X1/R1, R0/R1 e X0/X1: Z1 = Vnom²/Ssc com ângulo de X1/R1; R0 = R1·(R0/R1), X0 = X1·(X0/X1). (1) Isc máx: Isc trifásica e monofásica em kA com ângulo (referência: tensão da fonte a 0°): Z1 = E/I3φ e Z0 = 3E/I1φ − 2·Z1, com E = Vnom/√3. Diagramas antigos com Z0/Z1 (z0r) continuam valendo (solver.sourceZ). A seq. zero só entra com o neutro aterrado.
+**Impedância da fonte CA:** campo "Impedância da fonte" escolhe o modo. (0) Potência de curto-circuito (MVA) e relações X1/R1, R0/R1 e X0/X1: Z1 = Vnom²/Ssc com ângulo de X1/R1; R0 = R1·(R0/R1), X0 = X1·(X0/X1). (1) Isc máx: Isc trifásica e monofásica em kA com ângulo (referência: tensão da fonte a 0°): Z1 = E/I3φ e Z0 = 3E/I1φ − 2·Z1, com E = Vnom/√3. Diagramas antigos com Z0/Z1 (z0r) continuam valendo (solver.sourceZ). A seq. zero só entra com o neutro aterrado. Ao trocar o modo, os campos do novo modo recebem os **valores equivalentes** aos do anterior (na tensão nominal da fonte, percentual de 100 %).
+
+**Modos de ajuste equivalentes:** carga (P/Q ↔ S/FP), fonte (Ssc e relações ↔ Isc) e linha (R/X ↔ |Z| e ângulo) usam `get`/`put` dos campos em `model.ts`: o valor exibido é calculado do que está guardado e a edição grava os parâmetros que o solver usa. Os campos mostram até 6 algarismos significativos; valores acima do máximo (ex.: percentual da fonte > 1000, FP > 1) são corrigidos ao digitar.
 
 **TC e TP:** o diagrama mostra só a identificação do TP (3φ / 1φ X); as medições primária e secundária ficam na janela lateral.
 
-**Percentual da fonte** (`pct`, 0 a 1000 %): escala o nível de curto-circuito da fonte (Z1 e Z0 divididos por pct/100). 100 % = parametrizado; 0 % = fonte sem contribuição.
+**Percentual da fonte** (`pct`, campo "Percentual da fonte (0 a 1000)"; não aceita valor fora da faixa): escala o nível de curto-circuito da fonte (Z1 e Z0 divididos por pct/100). 100 % = parametrizado; 0 % = fonte sem contribuição.
 
 **Medições do IED** (janela lateral): grandezas primárias lidas dos TCs/TPs ligados ao IED, com ou sem relé do DigitalRelay associado — correntes e tensões de fase, tensões de linha, componentes simétricas (I1, I2, I0, 3I0, V1, V2, V0), P/Q/S, FP, VS e, no SEL-787, W2/W3, além do **Diagrama fasorial** (um só diagrama com tensões em traço cheio e correntes tracejadas, cada grupo com sua escala — V no semieixo positivo, A no negativo —, componente `PhasorDiagram` com a prop `second` e as cores do PhaseEngine; desligado por padrão). O usuário escolhe os grupos exibidos (`El.mshow`). São calculadas pela mesma função (`iedAnalog`) que alimenta a injeção do relé associado, então os valores coincidem com os do DigitalRelay.
 

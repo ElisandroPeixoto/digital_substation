@@ -14,7 +14,7 @@
  * - Falta (opcional, `withFault`): estudo por componentes simétricas (redes de seq. positiva, negativa e zero) com a falta no terminal do
  *   elemento Falta; ver `faultStudy` no fim do arquivo.
  */
-import { FAULT_TYPES, busCells, flag, isComm, num, t3group, tpPhase, vgroup, type El, type Wire } from './model'
+import { FAULT_TYPES, busCells, flag, isComm, loadPQ, num, t3group, tpPhase, vgroup, type El, type Wire } from './model'
 
 export const DEFAULT_SBASE = 100 // MVA
 /** Potência de base (MVA) da última chamada de `solve` (módulo síncrono: ajustada no início de cada cálculo). */
@@ -372,9 +372,7 @@ export function solve(allEls: El[], allWires: Wire[], energize = true, withFault
       addInj(n, mul(E, ys))
     } else if (e.kind === 'load') {
       const n = node(e, 0)
-      const p = Math.max(num(e, 'p'), 0)
-      const fp = Math.min(1, Math.max(num(e, 'fp'), 1e-3))
-      const q = p * Math.tan(Math.acos(fp)) * (flag(e, 'cap') ? -1 : 1)
+      const { p, q } = loadPQ(e)                                   // P/Q guardados (ou P, FP e capacitiva dos diagramas antigos)
       const y = conj(cx(p / SBASE, q / SBASE))
       loadY.set(e.id, y)
       addShunt(n, y)
