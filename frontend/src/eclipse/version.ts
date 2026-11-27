@@ -1,6 +1,6 @@
 // Controle de versão do Eclipse (versionamento semântico MAIOR.MENOR.CORREÇÃO).
 // A versão vem do package.json (injetada pelo Vite); ao lançar uma versão nova, atualize o package.json,
-// backend/app/version.py, o CHANGELOG.md da raiz e a lista VERSION_HISTORY abaixo.
+// backend/app/version.py, o CHANGELOG.md da raiz, docs/historico-versoes.md e a lista VERSION_HISTORY abaixo.
 declare const __APP_VERSION__: string
 declare const __BUILD_DATE__: string
 declare const __GIT_COMMIT__: string
@@ -11,7 +11,7 @@ export const GIT_COMMIT: string = __GIT_COMMIT__
 
 export interface VersionEntry { version: string; date: string; notes: string[] }
 
-/** Histórico de versões (mais recente primeiro), mostrado no Sobre. */
+/** Histórico de versões (mais recente primeiro), mostrado na página #/about/versoes. */
 export const VERSION_HISTORY: VersionEntry[] = [
   {
     version: '1.0.0',

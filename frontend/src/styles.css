@@ -347,7 +347,6 @@ td.files { background: var(--soft); }
 .ecl-version td:first-child { color: var(--muted); }
 .ecl-version-warn { color: var(--warn); font-size: 0.9em; }
 .ecl-history { margin-bottom: 12px; }
-.ecl-history summary { cursor: pointer; color: var(--accent); }
 .ecl-history h4 { margin: 10px 0 2px; }
 .ecl-version-date { color: var(--muted); font-weight: normal; }
 
@@ -450,6 +449,8 @@ td.files { background: var(--soft); }
 .oc-el.off { opacity: .7; }
 .oc-more > summary { cursor: pointer; font-size: 11px; color: var(--muted); }
 .oc-more .oc-row { margin-top: 6px; }
+.oc-mark { align-items: center; margin: 3px 0; }
+.oc-mark .numinput { flex: 1; }
 .oc-pri { font-size: 11px; color: var(--muted-2); }
 .oc-del { color: var(--err); justify-self: start; }
 @media (max-width: 1000px) { .oc { grid-template-columns: 1fr; } .oc-side { position: static; max-height: none; } }
@@ -706,6 +707,7 @@ button.tag-btn:hover { text-decoration: line-through; }
 .sl-mpick { margin: 6px 0; font-size: 12px; }
 .sl-mpick summary { cursor: pointer; color: var(--accent); }
 .sl-mpick .chk { display: block; margin: 3px 0; }
+.sl-phasors { display: grid; gap: 8px; margin: 8px 0; }
 .sl-ps { margin-top: 6px; }
 
 /* SystemLab – elemento Texto: barra de formatação (numeração e alinhamento) */

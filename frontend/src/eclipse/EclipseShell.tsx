@@ -3,7 +3,7 @@ import { APPS } from './apps'
 import { useTheme } from './theme'
 import { APP_VERSION, BUILD_DATE, GIT_COMMIT, VERSION_HISTORY } from './version'
 
-export type Route = 'home' | 'about' | 'digitalrelay' | 'phaseengine' | 'systemlab' | 'overcurrent' | 'iec61850' | 'mbitconfig' | 'scada'
+export type Route = 'home' | 'about' | 'versions' | 'digitalrelay' | 'phaseengine' | 'systemlab' | 'overcurrent' | 'iec61850' | 'mbitconfig' | 'scada'
 
 /** Nome exibido no header para a rota atual. */
 function routeTitle(route: Route): string {
@@ -50,7 +50,7 @@ export function EclipseHeader({ route }: { route: Route }) {
       {routeTitle(route) && <span className="ecl-current" aria-live="polite">{routeTitle(route)}</span>}
       <nav className="ecl-nav">
         <a href="#/" className={route === 'home' ? 'active' : ''}>Início</a>
-        <a href="#/about" className={route === 'about' ? 'active' : ''}>Sobre</a>
+        <a href="#/about" className={route === 'about' || route === 'versions' ? 'active' : ''}>Sobre</a>
       </nav>
       <AppSwitcher route={route} />
       <button className="theme-toggle" onClick={toggle} title={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'} aria-label="Alternar modo claro/escuro">
@@ -87,14 +87,8 @@ export function HomeView() {
   )
 }
 
-/** Versão do frontend, do servidor (backend) e da compilação; histórico de versões. */
+/** Versão do Eclipse e data da compilação, com link para o histórico de versões. */
 function VersionInfo() {
-  const [server, setServer] = useState<string | null>(null)
-  useEffect(() => {
-    let alive = true
-    fetch('/api/version').then((r) => (r.ok ? r.json() : null)).then((d) => { if (alive && d?.version) setServer(String(d.version)) }).catch(() => {})
-    return () => { alive = false }
-  }, [])
   const built = new Date(BUILD_DATE)
   const builtTxt = Number.isNaN(built.getTime()) ? BUILD_DATE : built.toLocaleString('pt-BR')
   return (
@@ -102,19 +96,31 @@ function VersionInfo() {
       <h3>Versão</h3>
       <table className="ecl-version"><tbody>
         <tr><td>Eclipse</td><td><b>{APP_VERSION}</b></td></tr>
-        <tr><td>Servidor (API)</td><td>{server ?? '–'}{server && server !== APP_VERSION && <span className="ecl-version-warn"> ⚠ diferente da interface; recompile o frontend ou reinicie o servidor</span>}</td></tr>
-        <tr><td>Compilação</td><td>{builtTxt}{GIT_COMMIT && <> · commit <code>{GIT_COMMIT}</code></>}</td></tr>
+        <tr><td>Compilação</td><td>{builtTxt}{GIT_COMMIT && <> · <code>{GIT_COMMIT}</code></>}</td></tr>
       </tbody></table>
-      <details className="ecl-history">
-        <summary>Histórico de versões</summary>
+      <p><a href="#/about/versoes">Histórico de versões →</a></p>
+    </>
+  )
+}
+
+/** Página separada com o histórico de versões (rota #/about/versoes). */
+export function VersionHistoryView() {
+  return (
+    <main className="ecl-about">
+      <p><a href="#/about">← Sobre</a></p>
+      <h1 className="ecl-title small">
+        <img src="/eclipse-icon.png" alt="" />
+        <span>Histórico de versões</span>
+      </h1>
+      <div className="ecl-history">
         {VERSION_HISTORY.map((v) => (
           <div key={v.version}>
             <h4>{v.version} <span className="ecl-version-date">– {new Date(v.date + 'T12:00:00').toLocaleDateString('pt-BR')}</span></h4>
             <ul>{v.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
           </div>
         ))}
-      </details>
-    </>
+      </div>
+    </main>
   )
 }
 

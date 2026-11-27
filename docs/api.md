@@ -6,7 +6,7 @@ Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclip
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/api/version` | `{"version": "1.0.0"}` – versão do Eclipse servida pelo backend (o Sobre compara com a do frontend). |
+| GET | `/api/version` | `{"version": "1.0.0"}` – versão do Eclipse servida pelo backend. |
 
 ## Arquivo `.rdb`
 

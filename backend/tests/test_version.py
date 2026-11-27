@@ -15,6 +15,7 @@ def test_versao_igual_no_frontend_e_backend():
     assert pkg["version"] == __version__
     assert re.fullmatch(r"\d+\.\d+\.\d+", __version__)
     assert f"## {__version__}" in (ROOT / "CHANGELOG.md").read_text(encoding="utf8")
+    assert f"## {__version__}" in (ROOT / "docs" / "historico-versoes.md").read_text(encoding="utf8")
 
 
 def test_endpoint_versao():

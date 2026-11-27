@@ -28,7 +28,7 @@ O gráfico é o centro da tela; os ajustes ficam na coluna da direita.
 5. **Tempo de atuação:** passe o mouse sobre qualquer curva. O gráfico marca o ponto, traça guias até os eixos e mostra um balão só com a **corrente** (A primários) e o **tempo** de atuação (ou "não atua", abaixo do pickup). Passar o mouse na legenda destaca a curva.
 6. **Zoom:** use a **roda do mouse** (aproxima/afasta nos dois eixos em torno do cursor) ou os botões **+ / −** no canto do gráfico; **arraste** para mover a vista e **duplo clique** (ou o botão **↺**)
    para voltar à vista inicial. Os rótulos dos eixos se adaptam ao zoom. O hover continua mostrando corrente e tempo.
-7. **Opções do gráfico** (nos ajustes): *corrente de falta* (mostra uma linha vertical e uma tabela com o tempo de cada curva visível e a margem entre curvas vizinhas), faixa de corrente mínima/máxima
+7. **Opções do gráfico** (nos ajustes): *marcações de corrente* (uma ou mais, com "+ marcação" e ✕ para remover; cada uma mostra uma linha vertical e uma tabela com o tempo de cada curva visível e a margem entre curvas vizinhas; estado salvo em `ifaults`), faixa de corrente mínima/máxima
    (automática por padrão) e **51SAT** (limita o múltiplo a 30, como no relé). "restaurar exemplo" volta ao exemplo de dois relés.
 
 ## Cálculo

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { PhasorDiagram } from '../components/PhasorDiagram'
 import { api } from '../api'
 import { simTime, usePrefs } from '../prefs'
 import type { SessionBrief } from '../types'
@@ -1437,8 +1438,6 @@ export function SystemLabApp() {
                 )}
                 <IedMeasurements el={selEl} model={iedModel(selEl)} patch={iedAnalog(selEl, iedModel(selEl), elById, sol)} onChange={(f) => updateEl(selEl.id, f)} />
                 {selEl.sid && sessions.some((x) => x.id === selEl.sid) && <ShortcutEditor key={selEl.id} el={selEl} onChange={(f) => updateEl(selEl.id, f)} />}
-                {sessions.length === 0 && <p className="hint">Nenhum relé ativo. Abra o DigitalRelay, carregue um .rdb e crie o relé; ele aparece aqui.</p>}
-                <p className="hint">Os IEDs associados a relés do mesmo projeto IEC61850 (aba IEC 61850 do DigitalRelay / app IEC61850) se comunicam por GOOSE automaticamente.</p>
               </>
             )}
             <Results el={selEl} r={selRes} />
@@ -1603,8 +1602,12 @@ const IED_MEAS: { k: string; l: string }[] = [
   { k: 'seqi', l: 'Componentes simétricas – corrente' }, { k: 'seqv', l: 'Componentes simétricas – tensão' },
   { k: 'pq', l: 'Potências (P, Q, S)' }, { k: 'fp', l: 'Fator de potência' }, { k: 'vs', l: 'Tensão de sincronismo (VS)' },
   { k: 'w23', l: 'Correntes dos enrolamentos W2/W3 (SEL-787)' }, { k: 'f', l: 'Frequência' },
+  { k: 'fas', l: 'Diagrama fasorial' },
 ]
 const IED_MEAS_DEFAULT = ['i', 'v', 'seqi', 'seqv', 'pq', 'fp', 'f']
+
+/** Cores das fases A, B, C no diagrama fasorial (as mesmas do PhaseEngine). */
+const PH_COLORS = ['#FC8181', '#4FD1C5', '#63B3ED']
 
 type C = { re: number; im: number }
 const cP = (mag: number, deg: number): C => ({ re: mag * Math.cos((deg * Math.PI) / 180), im: mag * Math.sin((deg * Math.PI) / 180) })
@@ -1657,13 +1660,24 @@ function IedMeasurements({ el, patch, model, onChange }: { el: El; patch: Record
       {!patch ? <p className="hint">{model === '2440' ? 'O SEL-2440 não tem entradas analógicas.' : 'Ligue um TC e/ou um TP ao IED (acima) para ver as medições.'}</p> : (
         <table className="tbl meas"><tbody>{rows.map(([k, v]) => <tr key={k}><td>{k}</td><td className="num">{v}</td></tr>)}</tbody></table>
       )}
+      {patch && show.includes('fas') && (hasV || hasI) && (
+        <div className="sl-phasors">
+          {(() => {   // um só diagrama: tensões (traço cheio) e correntes (tracejado), cada grupo com sua escala
+            const vI = V.map((z, k) => ({ label: `V${'abc'[k]}`, mag: cAbs(z), ang: cDeg(z), color: PH_COLORS[k] }))
+            const iI = I.map((z, k) => ({ label: `I${'abc'[k]}`, mag: cAbs(z), ang: cDeg(z), color: PH_COLORS[k] }))
+            const title = hasV && hasI ? 'Tensões e correntes' : hasV ? 'Tensões' : 'Correntes'
+            return hasV
+              ? <PhasorDiagram id={`ied${el.id}`} title={title} unit="V" items={vI} second={hasI ? { unit: 'A', items: iI } : undefined} />
+              : <PhasorDiagram id={`ied${el.id}`} title={title} unit="A" items={iI} />
+          })()}
+        </div>
+      )}
       <details className="sl-mpick">
         <summary>Medições exibidas</summary>
         {opts.map((m) => (
           <label key={m.k} className="chk"><input type="checkbox" checked={show.includes(m.k)} onChange={() => toggle(m.k)} /> {m.l}</label>
         ))}
       </details>
-      <p className="hint">Valores primários lidos dos TCs/TPs ligados ao IED (mesmo sem relé do DigitalRelay associado). Com relé associado, são os mesmos enviados à injeção do DigitalRelay. P/Q positivos no sentido da polaridade do TC.</p>
     </div>
   )
 }

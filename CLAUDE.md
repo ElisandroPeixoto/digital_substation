@@ -9,7 +9,7 @@ UI, comentários, docs e mensagens de commit. Identificadores de código em ingl
 podem ou não interagir entre si. Hoje há sete: o **SCADA** (`frontend/src/scada/ScadaApp.tsx`, `backend/app/scada.py`: supervisório dos relés do DigitalRelay pelo mapa DNP3 ativo – eventos binários, analógicos e comandos de todos os IEDs, polling de 1 a 60 s, planilha de mapa .xlsx/.csv cruzada por wordbit em `POST /api/scada/map/<sid>`; estado em `localStorage` `scada.state`; detalhes em `docs/scada.md`; testes `test_scada.py`), o **MBitConfig** (`frontend/src/mbitconfig/`, `backend/app/mbits.py`: links Mirrored Bits entre sessões do DigitalRelay; TMB avaliado no `engine._logic_stage`, RMB/ROK/RBAD entram por `engine.mb_bits`; detalhes em `docs/mbitconfig.md`; testes `test_mbits.py`), o **IEC61850** (`frontend/src/iec61850/`, `backend/app/scl.py` lê .scd/.cid; `backend/app/goose.py` = `GooseNetwork` em `SessionManager.net`, simula GOOSE entre sessões do DigitalRelay associadas a IEDs; VBs recebidos entram por `engine.ext_bits`; aba "IEC 61850" e várias instâncias no DigitalRelay; detalhes em `docs/iec61850.md`; testes `test_goose.py`), o **Overcurrent** (`frontend/src/overcurrent/`, só frontend: coordenograma de sobrecorrente com 51 fase/neutro e 50, vários relés, ocultar curvas e tempo no hover; `curves.ts` replica `backend/app/curves.py`; estado em `localStorage` `overcurrent.state`), o **SystemLab** (`frontend/src/systemlab/`, só frontend: editor de diagrama unifilar com toolbox, arrastar/ligar terminais e solver nodal em pu — `model.ts` = elementos/terminais/parâmetros, `solver.ts` = regime permanente trifásico equilibrado com Sbase 100 MVA, `symbols.tsx` = símbolos SVG, `SystemLabApp.tsx` = editor e painéis; diagrama em `localStorage` `systemlab.diagram`), o **DigitalRelay** (simulador do relé SEL-751, descrito no restante deste
 arquivo) e o **PhaseEngine** (`frontend/src/phaseengine/`, só frontend: entrada de V/I, diagrama fasorial com fasor de referência, potências P/Q/S e FP por fase e total, componentes de sequência em I2/I0 ou 3I2/3I0; usa `phasor.ts` e `PhasorDiagram`; cálculos em `calc.ts`; estado em `localStorage` `phaseengine.state`; ícone provisório igual ao do DigitalRelay). Estrutura do shell:
 
-- Roteamento **por hash** em `frontend/src/App.tsx`: `#/` Home, `#/about`, `#/digitalrelay`, `#/phaseengine`, `#/systemlab`, `#/overcurrent`, `#/iec61850`, `#/mbitconfig`, `#/scada`, `#/injecao/<sid>` (pop-up de
+- Roteamento **por hash** em `frontend/src/App.tsx`: `#/` Home, `#/about`, `#/about/versoes` (histórico de versões), `#/digitalrelay`, `#/phaseengine`, `#/systemlab`, `#/overcurrent`, `#/iec61850`, `#/mbitconfig`, `#/scada`, `#/injecao/<sid>` (pop-up de
   injeção do DigitalRelay, sem o header do Eclipse).
 - `frontend/src/eclipse/EclipseShell.tsx`: header (logo `eclipse-logo.png`, botões Home/About), `HomeView` (ícone + "Eclipse" em
   Montserrat + ícones dos apps) e `AboutView`. `frontend/src/eclipse/apps.ts`: **registro dos apps** – para criar um novo app,
@@ -42,7 +42,7 @@ portas (`P1–P4`, `PF`), touchscreen (`SET_HMI.TXT`).
 backend/    Python 3.12 + FastAPI (+ olefile, pytest, httpx)
 frontend/   React 18 + TypeScript + Vite (sem biblioteca de UI; CSS puro em src/styles.css)
 assets/     identidade visual do Eclipse (eclipse-logo/icon/…) e relay-front-reference.png (referência do frontal)
-docs/       um .md por app (digitalrelay.md, phaseengine.md, systemlab.md, overcurrent.md), guias didáticos (funcoes-50-51.md, funcao-direcional-67.md) + arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
+docs/       um .md por app (digitalrelay.md, phaseengine.md, systemlab.md, overcurrent.md), guias didáticos (funcoes-50-51.md, funcao-direcional-67.md) + historico-versoes.md, arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
 Padrões SEL-751.rdb                 arquivo de exemplo (20 ajustes) – usado pelos testes (arquivos *.rdb são ignorados pelo git)
 Padrões SEL-751 (extraído)/         extração manual feita no início (dado de referência, não é usada pelo código)
 run.ps1                             instala, compila o frontend e sobe em http://127.0.0.1:8000
@@ -131,8 +131,8 @@ demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em red
 ## Convenções e cuidados
 
 - **Versão** (semântica, atual 1.0.0): `frontend/package.json` (injetada pelo Vite em `eclipse/version.ts`, mostrada no Sobre com
-  data/commit da compilação e o `GET /api/version` do backend), `backend/app/version.py` e `CHANGELOG.md`; ao lançar versão, atualize
-  os três e `VERSION_HISTORY` (`test_version.py` confere).
+  data/commit da compilação; o histórico fica numa página separada, `#/about/versoes`), `backend/app/version.py`, `CHANGELOG.md` e
+  `docs/historico-versoes.md`; ao lançar versão, atualize os quatro e `VERSION_HISTORY` (`test_version.py` confere).
 
 - Os `.rdb`/set files são **dados não confiáveis**: apenas parseados, nunca executados. Upload limitado a 100 MB; sessões ≤ 8.
 - Endpoints que tocam o motor são `async def` de propósito: rodam na mesma thread do laço de simulação (sem locks).

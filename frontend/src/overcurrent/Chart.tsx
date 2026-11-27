@@ -41,14 +41,14 @@ interface Props {
   curves: Curve[]
   xmin: number
   xmax: number
-  ifault: number
+  ifaults: number[]          // marcações fixas de corrente (A primários)
   hoverKey: string | null
   onHover: (key: string | null) => void
 }
 
 interface Hov { key: string; i: number; px: number; py: number }
 
-export function Chart({ curves, xmin, xmax, ifault, hoverKey, onHover }: Props) {
+export function Chart({ curves, xmin, xmax, ifaults, hoverKey, onHover }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const [hov, setHov] = useState<Hov | null>(null)
@@ -192,12 +192,12 @@ export function Chart({ curves, xmin, xmax, ifault, hoverKey, onHover }: Props) 
         <text x={L + W / 2} y={VH - 10} textAnchor="middle" className="oc-axis">Corrente (A primários)</text>
         <text transform={`translate(16 ${T + H / 2}) rotate(-90)`} textAnchor="middle" className="oc-axis">Tempo de atuação (s)</text>
 
-        {ifault > 0 && ifault >= xminV && ifault <= xmaxV && (
-          <g>
-            <line x1={lx(ifault)} x2={lx(ifault)} y1={T} y2={T + H} stroke="var(--err)" strokeDasharray="5 4" strokeWidth={1.5} />
-            <text x={lx(ifault) + 5} y={T + 13} className="oc-tick" fill="var(--err)">{fmtI(ifault)} A</text>
+        {ifaults.map((f, k) => f > 0 && f >= xminV && f <= xmaxV && (
+          <g key={`f${k}`}>
+            <line x1={lx(f)} x2={lx(f)} y1={T} y2={T + H} stroke="var(--err)" strokeDasharray="5 4" strokeWidth={1.5} />
+            <text x={lx(f) + 5} y={T + 13 + 14 * (k % 3)} className="oc-tick" fill="var(--err)">{fmtI(f)} A</text>
           </g>
-        )}
+        ))}
 
         <g clipPath="url(#oc-clip)">
           {curves.map((c) => {

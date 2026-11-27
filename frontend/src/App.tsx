@@ -21,7 +21,7 @@ import { RelayFront } from './components/RelayFront'
 import { SettingsView } from './components/SettingsView'
 import { TestBench } from './components/TestBench'
 import { TopBar } from './components/TopBar'
-import { AboutView, EclipseShell, HomeView, type Route } from './eclipse/EclipseShell'
+import { AboutView, EclipseShell, HomeView, VersionHistoryView, type Route } from './eclipse/EclipseShell'
 import { UploadScreen } from './components/UploadScreen'
 import { VariablesView } from './components/VariablesView'
 
@@ -344,16 +344,17 @@ function useHash(): string {
   return h
 }
 
-/** Roteamento por hash: #/ (Home), #/about, #/digitalrelay; #/injecao/<sessão> abre a janela de injeção (pop-up). */
+/** Roteamento por hash: #/ (Home), #/about, #/about/versoes (histórico), #/digitalrelay; #/injecao/<sessão> abre a janela de injeção (pop-up). */
 export default function App() {
   const hash = useHash()
   const m = hash.match(/^#\/injecao\/([A-Za-z0-9]+)/)
   if (m) return <InjectionWindow sid={m[1]} />
-  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/systemlab') ? 'systemlab' : hash.startsWith('#/overcurrent') ? 'overcurrent' : hash.startsWith('#/iec61850') ? 'iec61850' : hash.startsWith('#/mbitconfig') ? 'mbitconfig' : hash.startsWith('#/scada') ? 'scada' : hash.startsWith('#/about') ? 'about' : 'home'
+  const route: Route = hash.startsWith('#/digitalrelay') ? 'digitalrelay' : hash.startsWith('#/phaseengine') ? 'phaseengine' : hash.startsWith('#/systemlab') ? 'systemlab' : hash.startsWith('#/overcurrent') ? 'overcurrent' : hash.startsWith('#/iec61850') ? 'iec61850' : hash.startsWith('#/mbitconfig') ? 'mbitconfig' : hash.startsWith('#/scada') ? 'scada' : hash.startsWith('#/about/versoes') ? 'versions' : hash.startsWith('#/about') ? 'about' : 'home'
   return (
     <EclipseShell route={route}>
       {route === 'home' && <HomeView />}
       {route === 'about' && <AboutView />}
+      {route === 'versions' && <VersionHistoryView />}
       {route === 'phaseengine' && <PhaseEngineApp />}
       {route === 'systemlab' && <PrefsProvider><SystemLabApp /></PrefsProvider>}
       {route === 'overcurrent' && <OvercurrentApp />}

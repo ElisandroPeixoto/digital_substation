@@ -13,7 +13,7 @@ interface Saved {
   sat: boolean
   xmin: string
   xmax: string
-  ifault: string
+  ifaults: string[] // marcações fixas de corrente (A primários): cada uma vira uma linha no gráfico e uma tabela de tempos
 }
 
 function defaults(): Saved {
@@ -28,14 +28,17 @@ function defaults(): Saved {
         n50: { on: false, pickup: 5, delay: 0.3 },
       }),
     ],
-    nextId: 3, hidden: [], colors: {}, sat: true, xmin: '', xmax: '', ifault: '',
+    nextId: 3, hidden: [], colors: {}, sat: true, xmin: '', xmax: '', ifaults: [''],
   }
 }
 
 function load(): Saved {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null')
-    if (s && Array.isArray(s.relays) && typeof s.nextId === 'number') return { ...defaults(), ...s }
+    if (s && Array.isArray(s.relays) && typeof s.nextId === 'number') {
+      const ifaults: string[] = Array.isArray(s.ifaults) ? s.ifaults : [typeof s.ifault === 'string' ? s.ifault : '']   // estado antigo: uma só corrente
+      return { ...defaults(), ...s, ifaults: ifaults.length ? ifaults : [''] }
+    }
   } catch { /* ignora */ }
   return defaults()
 }
@@ -111,7 +114,7 @@ export function OvercurrentApp() {
   }, [all, visible])
   const xmin = toNum(st.xmin) > 0 ? toNum(st.xmin) : auto.min
   const xmax = Math.max(toNum(st.xmax) > 0 ? toNum(st.xmax) : auto.max, xmin * 2)
-  const ifault = toNum(st.ifault)
+  const ifaults = st.ifaults.map(toNum)
 
   const patchRelay = (id: number, f: (r: Relay) => Relay) => setSt((s) => ({ ...s, relays: s.relays.map((r) => (r.id === id ? f(r) : r)) }))
   const patchEl = <K extends 'p51' | 'n51' | 'p50' | 'n50'>(id: number, k: K, p: Partial<Relay[K]>) => patchRelay(id, (r) => ({ ...r, [k]: { ...r[k], ...p } }))
@@ -124,10 +127,13 @@ export function OvercurrentApp() {
   const addRelay = () => setSt((s) => ({ ...s, relays: [...s.relays, newRelay(s.nextId, `Relé ${s.relays.length + 1}`)], nextId: s.nextId + 1 }))
   const removeRelay = (id: number) => setSt((s) => ({ ...s, relays: s.relays.filter((r) => r.id !== id), hidden: s.hidden.filter((h) => !h.startsWith(`${id}:`)) }))
 
-  const rows = useMemo(() => {
-    if (!(ifault > 0)) return []
-    return visible.map((c) => ({ c, t: c.time(ifault) })).sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity))
-  }, [visible, ifault])
+  // uma tabela de tempos por marcação (correntes repetidas ou vazias não geram tabela)
+  const tables = useMemo(() => [...new Set(ifaults.filter((f) => f > 0))].map((f) => ({
+    f, rows: visible.map((c) => ({ c, t: c.time(f) })).sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity)),
+  })), [visible, ifaults.join('|')])  // eslint-disable-line react-hooks/exhaustive-deps
+  const setMark = (k: number, v: string) => setSt((s) => ({ ...s, ifaults: s.ifaults.map((x, i) => (i === k ? v : x)) }))
+  const addMark = () => setSt((s) => ({ ...s, ifaults: [...s.ifaults, ''] }))
+  const delMark = (k: number) => setSt((s) => ({ ...s, ifaults: s.ifaults.length > 1 ? s.ifaults.filter((_, i) => i !== k) : [''] }))
   const fmtT = (t: number) => `${t >= 100 ? fmt(t, 1) : fmt(t, 3)} s`
 
   return (
@@ -155,12 +161,12 @@ export function OvercurrentApp() {
         </div>
 
         <div className="oc-plot">
-          <Chart curves={visible} xmin={xmin} xmax={xmax} ifault={ifault} hoverKey={hover} onHover={setHover} />
+          <Chart curves={visible} xmin={xmin} xmax={xmax} ifaults={ifaults} hoverKey={hover} onHover={setHover} />
         </div>
         <p className="hint oc-hint">Passe o mouse sobre uma curva para ver o tempo de atuação · roda do mouse = zoom · arrastar = mover · duplo clique = vista inicial.</p>
 
-        {ifault > 0 && rows.length > 0 && (
-          <table className="tbl meas oc-table">
+        {visible.length > 0 && tables.map(({ f: ifault, rows }) => (
+          <table key={ifault} className="tbl meas oc-table">
             <thead><tr><th>Curva ({fmtI(ifault)} A)</th><th>I ÷ pickup</th><th>Tempo</th><th>Margem</th></tr></thead>
             <tbody>
               {rows.map(({ c, t }, i) => {
@@ -176,7 +182,7 @@ export function OvercurrentApp() {
               })}
             </tbody>
           </table>
-        )}
+        ))}
       </main>
 
       {/* ------------------------------------------------------------- ajustes */}
@@ -259,8 +265,14 @@ export function OvercurrentApp() {
         <details className="oc-relay">
           <summary>Opções do gráfico</summary>
           <div className="oc-body">
-            <label className="oc-num"><span>Corrente de falta (A pri.) – mostra a tabela de tempos</span>
-              <input type="text" className="numinput" placeholder="ex.: 2400" value={st.ifault} onChange={(e) => setSt((s) => ({ ...s, ifault: e.target.value }))} /></label>
+            <span className="oc-num"><span>Marcações de corrente (A pri.) – cada uma mostra uma tabela de tempos</span></span>
+            {st.ifaults.map((v, k) => (
+              <div key={k} className="oc-row oc-mark">
+                <input type="text" className="numinput" placeholder="ex.: 2400" value={v} onChange={(e) => setMark(k, e.target.value)} aria-label={`Marcação ${k + 1} (A primários)`} />
+                <button className="link" onClick={() => delMark(k)} title="Remover a marcação">✕</button>
+              </div>
+            ))}
+            <button className="link" onClick={addMark}>+ marcação</button>
             <div className="oc-row">
               <label className="oc-num"><span>I mín. (A)</span>
                 <input type="text" className="numinput" placeholder={`auto`} title={`auto: ${fmtI(auto.min)}`} value={st.xmin} onChange={(e) => setSt((s) => ({ ...s, xmin: e.target.value }))} /></label>

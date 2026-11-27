@@ -1,8 +1,8 @@
 # Histórico de versões do Eclipse
 
 Versionamento semântico (`MAIOR.MENOR.CORREÇÃO`). A versão fica em `frontend/package.json` e `backend/app/version.py`
-(o teste `backend/tests/test_version.py` confere as duas e este arquivo); o histórico mostrado no Sobre fica em
-`frontend/src/eclipse/version.ts`.
+(o teste `backend/tests/test_version.py` confere as duas e este arquivo); o histórico mostrado no app (Sobre → Histórico de versões)
+fica em `frontend/src/eclipse/version.ts` e é repetido em `docs/historico-versoes.md`.
 
 ## 1.0.0 – 2026-11-26
 
