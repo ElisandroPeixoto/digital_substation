@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AppMark } from '../eclipse/AppMark'
 import { api } from '../api'
-import { usePoll } from '../hooks'
+import { modelLabel, usePoll } from '../hooks'
 import type { MbLinkS, MbPortInfo, MbRelay, MbStatus } from '../types'
 
 const CARD_W = 270
@@ -249,7 +249,7 @@ export function MBitConfigApp() {
                         style={{ left: p[0], top: p[1], width: CARD_W, height: CARD_H }} onClick={() => { setSelRelay(r.sid); setSelLink(null) }}>
                         <div className="mb-head" onPointerDown={(e) => onDown(e, r.sid)} title={r.device}>
                           <b>{r.relay_id.slice(0, 28)}</b>
-                          <small>{r.model === '2440' ? 'SEL-2440' : 'SEL-751'}{r.running ? '' : ' · pausado'}</small>
+                          <small>{modelLabel(r.model)}{r.running ? '' : ' · pausado'}</small>
                         </div>
                         {r.ports.map((pt, i) => {
                           const free = !linked.has(`${r.sid}:${pt.port}`)

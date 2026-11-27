@@ -88,6 +88,11 @@ class _Recloser:
     last_event: str = ""
 
 
+def _bit_list(text: str) -> list[str]:
+    """Lista de nomes do Relay Word digitada pelo usuário (separados por vírgula, ponto e vírgula ou espaço)."""
+    return [n for n in re.split(r"[\s,;]+", (text or "").upper()) if n]
+
+
 def _base_names() -> list[str]:
     names = ["TRIP", "CLOSE", "CF", "52A", "52B", "79RS", "79CY", "79LO", "SH0", "SH1", "SH2", "SH3", "SH4",
              "OC", "CC", "TRGTR", "HALARM", "LINKA", "LINKB", "TSNTPP", "TSNTPB", "DCLO", "DCHI", "FAULT", "ER",
@@ -118,7 +123,7 @@ class RelayEngine:
     def __init__(self, settings: RelaySettings, device_name: str = "") -> None:
         self.settings = settings
         rt = settings.header.get("RELAYTYPE", "").upper()
-        self.model = "2440" if "2440" in rt else "787" if "787" in rt else "751"
+        self.model = "2440" if "2440" in rt else "787" if "787" in rt else "311C" if "311C" in rt else "751"
         self.fixed: dict[str, bool] = {}          # bits VB/CB/RB mantidos pelo usuário (set/clear)
         self.forced: dict[str, float] = {}        # variáveis lógicas forçadas pelo usuário (valor fixo até liberar)
         self.ext_bits: dict[str, bool] = {}       # VBs escritos pela rede GOOSE (módulo IEC61850)
@@ -128,7 +133,7 @@ class RelayEngine:
         self.device_name = device_name or settings.device_name or settings.header.get("RELAYTYPE", "SEL-751")
         self.t = 0.0
         self.scan = 0
-        self.vals: dict[str, float] = {n: 0.0 for n in _base_names()}
+        self.vals: dict[str, float] = {n: 0.0 for n in self._names()}
         self.vals.update({f"VB{i:03d}": 0.0 for i in range(1, 257)})     # bits virtuais (GOOSE): 751 e 2440
         self.used_bits = self._scan_bits()
         if self.model == "2440":
@@ -177,7 +182,10 @@ class RelayEngine:
         self.trip_outs: list[str] = []
         self._analog_off_pending = False   # desligar a injeção assim que o disjuntor abrir
         self.close_outs: list[str] = []
+        self.auto_trip_outs: list[str] = []          # deduzidas das OUTxxx (usadas quando o usuário não define bk_trip/bk_close)
+        self.auto_close_outs: list[str] = []
         self.bk_input = "IN101"
+        self.auto_bk_input = "IN101"                 # entrada do 52A deduzida da equação (usada sem bk_status)
         self.panel = Panel(self)
         self.directional = Directional(self)
         self.dnp = DnpMap(self)
@@ -188,6 +196,10 @@ class RelayEngine:
         self._detect_coils()
         if self.model == "2440":
             self.trip_outs, self.close_outs = [], []
+
+    def _names(self) -> list[str]:
+        """Bits do Relay Word criados com valor 0 (o SEL-311C tem a sua própria lista)."""
+        return _base_names()
 
     # ------------------------------------------------------------ utilitários
     def resolve(self, name: str) -> float:
@@ -274,12 +286,24 @@ class RelayEngine:
         # entrada do estado do disjuntor (52A)
         expr52 = self.settings.get("1", "52A", "IN101")
         text, _ = split_comment(expr52)
-        self.bk_input = text if re.fullmatch(r"IN\d{3}", text.upper() or "") else "IN101"
-        self.bk_input = self.bk_input.upper()
-        if self.bk_input in self.inputs:
-            self.inputs[self.bk_input].raw = True
-            self.inputs[self.bk_input].filt = True
-            self.vals[self.bk_input] = 1.0
+        self.auto_bk_input = (text if re.fullmatch(r"IN\d{3}", text.upper() or "") else "IN101").upper()
+        self._apply_bk_status(initial=True)
+
+    def _apply_bk_status(self, initial: bool = False) -> None:
+        """Entrada que lê o estado do disjuntor: a escolhida pelo usuário (Disjuntor (campo)) ou a deduzida da equação 52A."""
+        name = (self.field.cfg.bk_status or self.auto_bk_input or "").upper()
+        old = getattr(self, "bk_input", "")
+        if old and old != name and old in self.inputs:
+            self.inputs[old].raw = self.inputs[old].filt          # a entrada anterior volta a ser livre, sem "salto"
+        self.bk_input = name
+        if not name:
+            return
+        if name not in self.inputs:
+            self.inputs[name] = _Input(name=name, raw=False, filt=False, debounce=0.01, label=self.labels.get(name, ""))
+            self.vals.setdefault(name, 0.0)
+        if initial:
+            self.inputs[name].raw = self.inputs[name].filt = True
+            self.vals[name] = 1.0
 
     def _setup_inputs_2440(self) -> None:
         """SEL-2440: todas as 48 entradas (3 cartões × 16), filtro de debounce em ms (INxxxD) e bit "normal" pelo ALIAS."""
@@ -317,6 +341,14 @@ class RelayEngine:
         return False
 
     def _detect_coils(self) -> None:
+        """Bobinas do disjuntor: as variáveis escolhidas pelo usuário (Disjuntor (campo)) ou as deduzidas das OUTxxx."""
+        trips, closes = self._auto_coils()
+        self.auto_trip_outs, self.auto_close_outs = trips, closes
+        cfg = self.field.cfg
+        self.trip_outs = _bit_list(cfg.bk_trip) or trips
+        self.close_outs = _bit_list(cfg.bk_close) or closes
+
+    def _auto_coils(self) -> tuple[list[str], list[str]]:
         trips: list[str] = []
         closes: list[str] = []
         for key in self.out_keys:
@@ -327,7 +359,7 @@ class RelayEngine:
                 closes.append(key)
             elif "TRIP" in ids or "ABERTURA" in c or "TRIP" in c:
                 trips.append(key)
-        self.trip_outs, self.close_outs = trips, closes
+        return trips, closes
 
     def _build_logic(self) -> None:
         l = self.l
@@ -457,8 +489,72 @@ class RelayEngine:
             self.vals.setdefault(name, 0.0)
         inp.raw = bool(value)
 
+    # ------------------------------------------------ ajustes em valor primário (aba Variáveis internas)
+    def _ratio_i(self, el) -> float:
+        """Relação do TC da grandeza do elemento: TC do enrolamento (SEL-787, W2_…), de neutro (IN) ou de fase."""
+        q = str(getattr(el, "qty", "") or "")
+        m = re.match(r"W(\d)_", q)
+        if m and hasattr(self, "ctr_of"):
+            return self.ctr_of(int(m.group(1)))
+        if q in ("IN", "IN1"):
+            return self.ctrn
+        return self.ctr
+
+    def primary_setting(self, el, setting: str) -> str:
+        """Converte os valores secundários do texto do ajuste (A, V, Ω) para primários; '–' se não há o que converter."""
+        ri = self._ratio_i(el)
+        rv = self.ptrs if getattr(el, "family", "") in ("27S", "59S") else self.ptr
+        hit = False
+
+        def num(x: float) -> str:
+            return ("%.2f" % x).rstrip("0").rstrip(".")
+
+        def conv(m: re.Match) -> str:
+            nonlocal hit
+            x, unit = float(m.group(1)), m.group(2)
+            hit = True
+            if unit == "A":
+                return f"{num(x * ri)} A"
+            if unit == "V":
+                v = x * rv
+                return f"{num(v / 1000)} kV" if abs(v) >= 1000 else f"{num(v)} V"
+            return f"{num(x * self.ptr / self.ctr)} Ω"      # impedância: Ω sec × PTR/CTR
+
+        out = re.sub(r"(-?\d+(?:\.\d+)?) ?(A|V|Ω)(?: sec\.)?(?![A-Za-z0-9])", conv, setting or "")
+        return out if hit else "–"
+
+    def _with_primary(self, el) -> dict:
+        d = el.info()
+        d["setting_pri"] = self.primary_setting(el, d.get("setting", ""))
+        return d
+
+    def _check_bits(self, text: str) -> str:
+        """Valida a lista de variáveis de abertura/fechamento (nomes do Relay Word separados por vírgula ou espaço)."""
+        names = _bit_list(text)
+        bad = [n for n in names if n not in self.vals]
+        if bad:
+            raise ValueError(f"variável desconhecida no Relay Word: {', '.join(bad)}")
+        return ", ".join(names)
+
     def set_sim(self, patch: dict) -> None:
         cfg = self.field.cfg
+        coils = False
+        for key in ("bk_trip", "bk_close", "bk_status"):
+            if key not in patch:
+                continue
+            if self.model == "2440":
+                raise ValueError("o SEL-2440 não tem disjuntor simulado")
+            val = str(patch.pop(key) or "").strip().upper()
+            if key == "bk_status":
+                if val and not re.fullmatch(r"IN\d{3}", val):
+                    raise ValueError(f"o estado do disjuntor deve ser uma entrada digital (INxxx): {val}")
+                cfg.bk_status = val
+                self._apply_bk_status()
+            else:
+                setattr(cfg, key, self._check_bits(val) if val else "")
+                coils = True
+        if coils and self.model != "2440":
+            self._detect_coils()
         for key, val in patch.items():
             if key in ("fault_type",):
                 cfg.fault_type = val or None
@@ -910,6 +1006,8 @@ class RelayEngine:
 
     # -- 6: disjuntor
     def _breaker_stage(self, dt: float) -> None:
+        if not self.field.cfg.breaker_auto:            # sem simulação do disjuntor: as bobinas não movem nada
+            return
         v = self.vals
         trip_coil = any(v.get(k, 0.0) for k in self.trip_outs)
         close_coil = any(v.get(k, 0.0) for k in self.close_outs)
@@ -1022,7 +1120,7 @@ class RelayEngine:
             "forced": dict(self.forced), "time": round(self.t, 3), "group": self.group, "pending_group": self.pending_group,
             "inputs": inputs, "outputs": outputs, "latches": latches, "timers": timers, "counters": counters,
             "math": maths,
-            "protection": {"elements": [e.info() for e in self.elements], "disabled": self.n_off},
+            "protection": {"elements": [self._with_primary(e) for e in self.elements], "disabled": self.n_off},
             "directional": self.directional.info(),
             "trip_close": {
                 "TRIP": self.b("TRIP"), "TR": self.b("TR"), "TR_expr": self.expr_text(g, "TR"), "ULTRIP": self.b("ULTRIP"),

@@ -8,7 +8,7 @@ testes `backend/tests/test_scada.py`. Ícone `assets/app-icons/scada.png`.
 
 ## Uso
 
-- **IEDs supervisionados:** escolha os relés do DigitalRelay e clique em *Adicionar IED*. A tabela mostra modelo, mapa DNP ativo (D1–D3),
+- **IEDs supervisionados:** escolha os relés do DigitalRelay (qualquer modelo com mapa DNP: SEL-751, SEL-787, SEL-311C, SEL-2440) e clique em *Adicionar IED*. A tabela mostra modelo, mapa DNP ativo (D1–D3),
   quantidade de pontos BI / AI / BO e a planilha de mapa carregada. *Remover IED* tira o relé da supervisão (não altera o relé).
 - **Polling:** de 1 s a 60 s (padrão 2 s). Botões *Pausar/Retomar*, *Atualizar* (leitura imediata) e *Limpar eventos* (só a lista do SCADA).
 - **Abas:**

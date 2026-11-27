@@ -23,9 +23,10 @@ _YES = {"Y", "YES", "1", "ON", "TRUE"}
 
 
 def rdb_flag(engine, key: str) -> bool:
-    """Valor Y/N do ajuste (classe P1) – desabilitado quando o relé não tem o ajuste."""
+    """Valor Y/N do ajuste da porta Ethernet (classe P1; no SEL-311C, P5) – desabilitado quando o relé não tem o ajuste."""
+    cls = "P5" if getattr(engine, "model", "") == "311C" else "P1"
     try:
-        return str(engine.settings.get("P1", key, "N")).strip().strip('"').upper() in _YES
+        return str(engine.settings.get(cls, key, "N")).strip().strip('"').upper() in _YES
     except Exception:  # noqa: BLE001
         return False
 

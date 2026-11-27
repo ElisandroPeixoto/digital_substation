@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { fmt, usePoll } from '../hooks'
+import { fmt, modelLabel, usePoll } from '../hooks'
 import { normAngle, sequence } from '../phasor'
 import type { Polar } from '../phasor'
 import type { SessionInfo, SimConfig } from '../types'
@@ -60,7 +60,7 @@ export function InjectionWindow({ sid }: { sid: string }) {
   }, [error])
 
   useEffect(() => {
-    document.title = `Injeção de corrente e tensão – ${info?.model === '787' ? 'SEL-787' : 'SEL-751'}`
+    document.title = `Injeção de corrente e tensão – ${modelLabel(info?.model)}`
     api.getSession(sid).then(setInfo).catch((e) => setErr(e instanceof Error ? e.message : String(e)))
   }, [sid, info?.model])
 

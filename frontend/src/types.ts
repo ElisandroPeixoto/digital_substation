@@ -24,7 +24,11 @@ export interface StaticInfo {
   pb: { n: number; label_a: string; label_b: string }[]
   enabled_color: string
   trip_color: string
+  local_bits?: LocalBitInfo[]   // SEL-311C: bits locais (NLBn/SLBn/CLBn/PLBn da classe T)
 }
+
+/** SEL-311C: bit local LBn operado pelo menu CNTRL do frontal. */
+export interface LocalBitInfo { n: number; name: string; set: string; clear: string; pulse: string }
 
 export interface SettingClass {
   cls: string
@@ -33,7 +37,7 @@ export interface SettingClass {
 }
 
 export interface SessionInfo {
-  model?: string          // 'SEL-751' (padrão) ou '2440'
+  model?: string          // '751' (padrão), '787', '2440' ou '311C'
   ied?: string | null     // IED do módulo IEC61850 associado
   id: string
   filename: string
@@ -65,6 +69,8 @@ export interface PanelSnapshot {
   targets: { id: string; on: boolean; color: string; latched: boolean }[]
   pb: { n: number; a: Led; b: Led }[]
   lcd: string[]
+  fault_type?: { id: string; on: boolean }[]                                   // SEL-311C: LEDs FAULT TYPE A/B/C/G
+  local_bits?: (LocalBitInfo & { on: boolean; held: boolean | null })[]       // SEL-311C: estado dos bits locais
 }
 
 export interface SimConfig {
@@ -91,6 +97,9 @@ export interface SimConfig {
   fault_current: number
   fault_persistent: boolean
   breaker_auto: boolean
+  bk_trip: string
+  bk_close: string
+  bk_status: string
   analog_off_on_output: boolean
   analog_off_outputs: string[]
   analog_on: boolean
@@ -147,7 +156,8 @@ export interface PanelData {
   running: boolean
   speed: number
   panel: PanelSnapshot
-  breaker: { state: string; closed: boolean; operations: number }
+  breaker: { state: string; closed: boolean; operations: number; trip_vars?: string[]; close_vars?: string[]; status_var?: string;
+    auto_trip?: string[]; auto_close?: string[]; auto_status?: string }
   status: { group: number; trip: number; close: number; cf: number; recloser: string; shot: number; unresolved: number }
   sim: SimConfig
   systemlab?: { linked: boolean; isolated: boolean }   // relé alimentado pelo SystemLab / isolado pelo usuário
@@ -195,6 +205,7 @@ export interface StateElement {
   quantity: string
   pickup: number
   setting: string
+  setting_pri?: string            // mesmo ajuste com A, V e Ω convertidos para primário ("–" se não se aplica)
   tc: string
   measured: number
   pickup_bit: string
@@ -226,6 +237,18 @@ export interface DirectionalInfo {
   settings?: Record<string, number | string>
   quantities?: Record<string, number | null>
 }
+export interface Line311Info {
+  bits: Record<string, boolean>
+  v1mem: number
+  v1: number
+  i1: number
+  i2: number
+  i0: number
+  order?: string
+  used?: string
+  z2?: number
+  z0?: number
+}
 export interface StateData {
   forced?: Record<string, number>
   time: number
@@ -239,6 +262,7 @@ export interface StateData {
   math: { name: string; expr: string; comment: string; value: number }[]
   protection: { elements: StateElement[]; disabled: number }
   directional: DirectionalInfo
+  line311?: Line311Info        // SEL-311C: direcionais e supervisões da linha
   trip_close: Record<string, string | number | string[] | null>
   recloser: {
     enabled: boolean

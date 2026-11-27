@@ -14,7 +14,7 @@ from .settings import RelaySettings
 _NORMAL_WORDS = {"NORMAL", "FECHADO", "CARREGADA", "OK", "PRESENTE", "LIGADO", "ENERGIZADO",
                  "DESBLOQUEADA", "DESBLOQUEADO"}
 _FMT_RE = re.compile(r"\{(\d+)(?:\.(\d+))?(?:,\s*(-?\d+(?:\.\d+)?))?\}")
-_RE_CMD = re.compile(r"^(RB\d\d|OC|CC)$")
+_RE_CMD = re.compile(r"^(RB\d{1,2}|OC|CC)$")
 _RE_OC = re.compile(r"^(50|51)([ABCPNGQ]\d?)([PT])$")
 _ELEM = {"A": "fase A", "B": "fase B", "C": "fase C", "P": "fase", "N": "neutro", "G": "terra", "Q": "seq. negativa"}
 _STANDARD = {
@@ -93,6 +93,18 @@ def _aliases(settings: RelaySettings) -> dict[str, tuple[str, str, str]]:
     return out
 
 
+def _text_dps(settings: RelaySettings) -> list[tuple[str, str, str]]:
+    """Pontos de display do SEL-311C: bit em ``DPn`` (Lógica 1) e textos ``DPn_1``/``DPn_0`` (classe T)."""
+    T = settings.sections.get("T", {})
+    L = settings.sections.get("L1", {})
+    out = []
+    for n in range(1, 17):
+        bit = split_comment(L.get(f"DP{n}", ""))[0].upper()
+        if bit and re.fullmatch(r"[A-Z0-9_]+", bit):
+            out.append((bit, T.get(f"DP{n}_1", "").strip(), T.get(f"DP{n}_0", "").strip()))
+    return out
+
+
 def normal_state(settings: RelaySettings, bit: str) -> bool | None:
     """Estado "normal" (1 ou 0) de um bit, deduzido de ALIAS e dos pontos de display."""
     bit = bit.upper()
@@ -110,6 +122,12 @@ def normal_state(settings: RelaySettings, bit: str) -> bool | None:
                     return True
                 if dp["text1"] and not dp["text0"]:
                     return False
+    for name, t1, t0 in _text_dps(settings):
+        if name == bit:
+            if t0 and not t1:
+                return True
+            if t1 and not t0:
+                return False
     return None
 
 
@@ -123,10 +141,10 @@ def build_labels(settings: RelaySettings) -> dict[str, str]:
         _, comment = split_comment(val)
         if not comment:
             continue
-        m = re.fullmatch(r"SET(\d\d)", key)
+        m = re.fullmatch(r"SET(\d{1,2})", key)
         if m:
             labels[f"LT{m.group(1)}"] = comment
-        elif re.fullmatch(r"SV\d\d", key):
+        elif re.fullmatch(r"SV\d{1,2}", key):
             labels[key] = comment
             labels[key + "T"] = comment
         elif re.fullmatch(r"OUT\d{3}", key):
@@ -157,4 +175,13 @@ def build_labels(settings: RelaySettings) -> dict[str, str]:
                 text = dp["text1"] or dp["text0"]
                 if text and dp["name"] != "1":
                     labels.setdefault(dp["name"], text.title())
+    # SEL-311C: pontos de display (classe T) e nomes dos bits locais (NLBn)
+    for name, t1, t0 in _text_dps(settings):
+        text = t1 or t0
+        if text and name != "1":
+            labels.setdefault(name, text.title())
+    for key, val in settings.sections.get("T", {}).items():
+        m = re.fullmatch(r"NLB(\d{1,2})", key)
+        if m and val.strip():
+            labels.setdefault(f"LB{m.group(1)}", val.strip())
     return labels

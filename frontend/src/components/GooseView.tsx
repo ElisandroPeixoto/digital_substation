@@ -41,8 +41,8 @@ export function GooseView({ info, onChanged }: { info: SessionInfo; onChanged: (
               {!mine.comm_ok && <small className="muted">{mine.reason}</small>}
             </p>
             <p className="hint">
-              Ajustes da porta 1 (RDB): E61850 = <b>{mine.rdb_e61850 ? 'Y' : 'N'}</b>, EGSE = <b>{mine.rdb_egse ? 'Y' : 'N'}</b>. Se estiverem em Y, o 61850 já nasce habilitado;
-              altere em <i>Ajustes → P1</i>. Também interferem: HALARM, enlaces LINKA/LINKB, pausa da simulação, cabo e rede no app IEC61850.
+              Ajustes da porta {info.model === '311C' ? 5 : 1} (RDB): E61850 = <b>{mine.rdb_e61850 ? 'Y' : 'N'}</b>, EGSE = <b>{mine.rdb_egse ? 'Y' : 'N'}</b>. Se estiverem em Y, o 61850 já nasce habilitado;
+              altere em <i>Ajustes → {info.model === '311C' ? 'P5' : 'P1'}</i>. Também interferem: HALARM, enlaces LINKA/LINKB, pausa da simulação, cabo e rede no app IEC61850.
             </p>
           </>
         )}

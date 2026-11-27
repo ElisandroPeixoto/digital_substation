@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api } from '../api'
 import { fmt, usePoll } from '../hooks'
-import type { DirectionalInfo, StateData, StateElement } from '../types'
+import type { DirectionalInfo, Line311Info, StateData, StateElement } from '../types'
 import { useStamp } from '../prefs'
 import { Bar, Empty, Pill, Section } from './ui'
 
@@ -90,7 +90,7 @@ export function VariablesView({ sid, model }: { sid: string; model?: string }) {
         <table className="tbl">
           <tbody>
             <tr><td>TR</td><td><Pill on={tc.TR as number} /></td><td className="mono wrap">{String(tc.TR_expr)}</td></tr>
-            <tr><td>ULTRIP</td><td><Pill on={tc.ULTRIP as number} /></td><td className="muted">Desbloqueio do TRIP após TDURD = {String(tc.TDURD)} s</td></tr>
+            <tr><td>{s.line311 ? 'ULTR' : 'ULTRIP'}</td><td><Pill on={tc.ULTRIP as number} /></td><td className="muted">Desbloqueio do TRIP após TDURD = {String(tc.TDURD)} s</td></tr>
             <tr><td>CL</td><td><Pill on={tc.CL as number} /></td><td className="mono wrap">{String(tc.CL_expr)}</td></tr>
             <tr><td>CF</td><td><Pill on={tc.CF as number} /></td><td className="muted">Falha de fechamento</td></tr>
             <tr><td>Bobinas de abertura</td><td colSpan={2} className="mono">{(tc.trip_outputs as string[]).join(', ') || '–'}</td></tr>
@@ -105,7 +105,7 @@ export function VariablesView({ sid, model }: { sid: string; model?: string }) {
         ) : (
           <table className="tbl">
             <thead>
-              <tr><th>Elemento</th><th>Função</th><th>Ajuste</th><th>Medido</th><th>× pickup</th><th>Tempo previsto</th><th>Controle de torque</th><th>Sentido</th><th>Partida</th><th>Atuação</th><th>Reset</th><th>Avanço</th></tr>
+              <tr><th>Elemento</th><th>Função</th><th>Ajuste</th><th>Ajuste (primário)</th><th>Medido</th><th>Controle de torque</th><th>Sentido</th><th>Partida</th><th>Atuação</th><th>Reset</th><th>Avanço</th></tr>
             </thead>
             <tbody>
               {s.protection.elements
@@ -115,9 +115,8 @@ export function VariablesView({ sid, model }: { sid: string; model?: string }) {
                     <td className="mono">{e.name}</td>
                     <td>{e.kind}</td>
                     <td className="mono">{e.setting}</td>
+                    <td className="mono">{e.setting_pri ?? '–'}</td>
                     <td className="mono">{fmt(e.measured, 2)}</td>
-                    <td className="mono">{e.measured && e.pickup ? fmt(e.measured / e.pickup, 2) : '–'}</td>
-                    <td className="mono">{e.t_op != null ? `${fmt(e.t_op, 2)} s` : '–'}</td>
                     <td className="mono">{e.tc || '1'}</td>
                     <td>{e.dir_bit ? <Pill on={!!e.dir_ok} onLabel="LIBERA" offLabel="BLOQUEIA" title={e.dir_bit} /> : '–'}</td>
                     <td><Pill on={e.pk} title={e.pickup_bit} /></td>
@@ -133,7 +132,7 @@ export function VariablesView({ sid, model }: { sid: string; model?: string }) {
 
       <DiffSection elements={s.protection.elements} />
 
-      <DirectionalSection d={s.directional} />
+      {s.line311 ? <Line311Section d={s.line311} /> : <DirectionalSection d={s.directional} />}
 
       <Section title="Religamento automático (79)" open={rc.enabled}>
         {!rc.enabled ? (
@@ -288,6 +287,34 @@ const BIT_GROUPS: [string, string[]][] = [
   ['Sentido (roteamento)', ['DIRPF', 'DIRPR', 'DIRQF', 'DIRQR', 'DIRNF', 'DIRNR', 'DIRGF', 'DIRGR']],
 ]
 const SHOWN_SETTINGS = ['50QFP', '50QRP', 'Z2F', 'Z2R', 'a2', 'k2', '50GFP', '50GRP', 'Z0F', 'Z0R', 'a0', 'Z0MTA']
+
+/** SEL-311C: supervisões e direcionais da linha (32Q, 32G pela ORDER, 32P por memória de V1, FIDS, LOP, 3PO, carga). */
+function Line311Section({ d }: { d: Line311Info }) {
+  const groups: [string, string[]][] = [
+    ['Polarização e supervisão', ['VPOLV', 'LOP', 'ILOP', '3PO', 'SOTFE', 'ZLOAD']],
+    ['Seleção de fase (FIDS)', ['FSA', 'FSB', 'FSC']],
+    ['Seq. negativa (32Q)', ['32QE', '32QGE', '50QF', '50QR', '32QF', '32QR']],
+    ['Terra (32G)', ['32VE', '50GF', '50GR', '32GF', '32GR']],
+    ['Seq. positiva (32P)', ['F32P', 'R32P']],
+  ]
+  return (
+    <Section title="Direcionais e supervisões da linha (SEL-311C)" open>
+      <div className="summary-cards">
+        <div className="mini"><span>|V1| / |V1mem| (V sec.)</span><b className="mono">{fmt(d.v1, 2)} / {fmt(d.v1mem, 2)}</b></div>
+        <div className="mini"><span>|I1| · |I2| · |I0| (A sec.)</span><b className="mono">{fmt(d.i1, 2)} · {fmt(d.i2, 2)} · {fmt(d.i0, 2)}</b></div>
+        <div className="mini"><span>ORDER / em uso</span><b className="mono">{d.order} / {d.used || '–'}</b></div>
+        <div className="mini"><span>z2 / z0 (Ω sec.)</span><b className="mono">{fmt(d.z2, 2)} / {fmt(d.z0, 2)}</b></div>
+      </div>
+      {groups.map(([title, names]) => (
+        <div key={title}>
+          <h4>{title}</h4>
+          <div className="row wrap">{names.map((n) => <Pill key={n} on={!!d.bits[n]} onLabel={n} offLabel={n} />)}</div>
+        </div>
+      ))}
+      <p className="hint">VPOLV = memória de V1 &gt; 1 V (manual p. 3.21). A constante de tempo da memória não consta no manual fornecido: o simulador adota 16 ciclos.</p>
+    </Section>
+  )
+}
 
 function DirectionalSection({ d }: { d: DirectionalInfo }) {
   const q = d.quantities ?? {}

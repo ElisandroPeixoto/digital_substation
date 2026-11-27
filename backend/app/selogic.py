@@ -1,6 +1,8 @@
 """Interpretador de equações SELogic (subconjunto usado pelo SEL-751).
 
 Operadores: NOT, AND, OR, XOR, R_TRIG, F_TRIG, comparações, + - * /, ABS(), SQRT().
+Sintaxe clássica (SELogic do SEL-311C): ``!X`` = NOT, ``/X`` = borda de subida, ``\\X`` = borda de descida; ``*`` e ``+``
+funcionam como AND/OR porque os operandos são bits 0/1 (o resultado diferente de zero vale 1).
 Comentários começam com ``#``. ``NA`` e ``OFF`` equivalem a "sem equação" (valor 0).
 
 Importante: todas as sub-expressões são avaliadas a cada chamada (sem curto-circuito),
@@ -14,7 +16,7 @@ from typing import Callable
 
 Resolver = Callable[[str], float]
 
-_TOKEN_RE = re.compile(r"\s*(<=|>=|<>|[()+\-*/<>=,]|[A-Za-z0-9_.]+)")
+_TOKEN_RE = re.compile(r"\s*(<=|>=|<>|[()+\-*/<>=,!\\]|[A-Za-z0-9_.]+)")
 _NUM_RE = re.compile(r"^(\d+(\.\d*)?|\.\d+)$")
 _FUNCS: dict[str, Callable[[float], float]] = {
     "ABS": abs,
@@ -195,16 +197,16 @@ class _Parser:
 
     def _unary(self):
         tok = self._peek()
-        if tok == "NOT":
+        if tok in ("NOT", "!"):
             self._next()
             return _Not(self._unary())
         if tok == "-":
             self._next()
             return _Neg(self._unary())
-        if tok == "R_TRIG":
+        if tok in ("R_TRIG", "/"):          # "/X": borda de subida (SELogic clássica, SEL-311C)
             self._next()
             return _Trig(True, self._unary())
-        if tok == "F_TRIG":
+        if tok in ("F_TRIG", "\\"):         # "\X": borda de descida (SELogic clássica, SEL-311C)
             self._next()
             return _Trig(False, self._unary())
         return self._primary()

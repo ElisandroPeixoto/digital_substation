@@ -86,7 +86,10 @@ class SimConfig:
     fault_current: float = 2400.0
     fault_persistent: bool = True
     lop: bool = False                  # perda de potencial simulada (bit LOP), acionada pelo usuário
-    breaker_auto: bool = True          # 52A (IN101) acompanha o modelo do disjuntor
+    breaker_auto: bool = True          # simula o disjuntor: bobinas movem a posição e a entrada de estado a acompanha
+    bk_trip: str = ""                  # variáveis que abrem o disjuntor (vazio = deduzidas das OUTxxx)
+    bk_close: str = ""                 # variáveis que fecham o disjuntor (vazio = deduzidas)
+    bk_status: str = ""                # entrada que lê o estado do disjuntor (vazio = a da equação 52A)
     sl_isolated: bool = False          # injeção isolada do SystemLab (o usuário injeta direto no DigitalRelay)
     analog_on: bool = False            # injeção analógica (inicia DESLIGADA: desligada = tensões e correntes zero)
     analog_off_on_output: bool = False  # desliga a injeção analógica quando uma saída digital (OUTxxx) atua

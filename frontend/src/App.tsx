@@ -14,6 +14,7 @@ import { OvercurrentApp } from './overcurrent/OvercurrentApp'
 import { PrefsProvider } from './prefs'
 import { ConfigView } from './components/ConfigView'
 import { Panel2440 } from './components/Panel2440'
+import { Relay311CFront } from './components/Relay311CFront'
 import { GooseView } from './components/GooseView'
 import { TextsView } from './components/TextsView'
 import { useCustomTexts } from './customTexts'
@@ -316,7 +317,12 @@ function DigitalRelayApp() {
               <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{l}</button>
             ))}
           </nav>
-          {tab === 'panel' && (info.model === '2440' ? <Panel2440 sid={info.id} data={panel} texts={texts} /> : (
+          {tab === 'panel' && (info.model === '2440' ? <Panel2440 sid={info.id} data={panel} texts={texts} /> : info.model === '311C' ? (
+            <div className="panel-tab panel-311">
+              <Relay311CFront info={info} panel={panel} onPb={press} onTargetReset={targetReset} />
+              <TestBench sid={info.id} info={info} data={panel} texts={texts} />
+            </div>
+          ) : (
             <div className="panel-tab">
               <RelayFront info={info} panel={panel} onPb={press} onTargetReset={targetReset} />
               <TestBench sid={info.id} info={info} data={panel} texts={texts} />

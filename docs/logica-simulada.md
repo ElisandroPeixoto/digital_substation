@@ -132,9 +132,10 @@ A perda de potencial é acionada pelo usuário (chave **Perda de potencial (LOP)
 
 ## Disjuntor e campo
 
-- Bobinas de **abertura** e de **fechamento** são deduzidas das saídas: expressão contendo `TRIP` / comentário com
-  "ABERTURA"/"TRIP" → abertura; contendo `CLOSE` / "FECHAMENTO" → fechamento. A posição alimenta a entrada do `52A`
-  (deduzida da equação `52A`, normalmente `IN101`). A lista usada aparece em *Variáveis internas → Disparo e fechamento*.
+- Bobinas de **abertura** e de **fechamento**: as variáveis escolhidas no cartão *Disjuntor (campo)* (`SimConfig.bk_trip`/`bk_close`, bits do
+  Relay Word) ou, vazias, deduzidas das saídas: expressão contendo `TRIP` / comentário com "ABERTURA"/"TRIP" → abertura; contendo `CLOSE` /
+  "FECHAMENTO" → fechamento (`engine._detect_coils` → `_auto_coils`). A posição alimenta a entrada de estado (`bk_status` ou a da equação `52A`,
+  normalmente `IN101`; `engine._apply_bk_status`). A lista usada aparece em *Variáveis internas → Disparo e fechamento*.
 - Tempos mecânicos configuráveis (padrão: abrir 60 ms, fechar 100 ms).
 - **Injeção**: o usuário define fasores (módulo e ângulo) de corrente e tensão por fase, e a frequência. O valor é guardado
   em grandezas **primárias**; no modo secundário a interface converte com TC (`CTR`) e TP (`PTR`). A corrente de neutro
@@ -146,9 +147,9 @@ A perda de potencial é acionada pelo usuário (chave **Perda de potencial (LOP)
 - Falta (só pela API `/fault`; a interface não tem mais o atalho): tipos AG, BG, CG, AB, BC, CA, ABC, com corrente configurável, **permanente** ou **transitória** (some ao abrir).
   Ela **sobrepõe** as correntes inseridas nas fases envolvidas (ângulo -75°, -45°…) e afunda as tensões; sem impedância de
   fonte. Com o disjuntor aberto a corrente vista pelo relé é zero.
-- **Entrada do 52A (IN101)**: com *simular o estado do disjuntor automaticamente* ligado, ela acompanha o modelo do disjuntor
-  (e alternar a entrada move o disjuntor). Desligado, a entrada é livre (útil para testar 52A divergente do estado físico),
-  e o disjuntor continua a abrir/fechar pelas bobinas e pelos botões *Abrir/Fechar (campo)*.
+- **Simular disjuntor** (`breaker_auto`): ligado, a entrada de estado acompanha o modelo do disjuntor (e alternar a entrada move o disjuntor).
+  Desligado, **não há disjuntor**: as bobinas não movem nada (`_breaker_stage` não roda), a entrada é livre (útil para testar 52A divergente) e
+  `GET /api/sessions` devolve `breaker_closed = null`, então o SystemLab não sincroniza a posição. No SEL-787 a chave só desacopla a entrada.
 - A resolução de tempo é de **4 ms** por varredura (a 1×). Em velocidades maiores, o passo cresce proporcionalmente
   (ex.: 10× → 40 ms); use 1× para medir tempos de atuação.
 

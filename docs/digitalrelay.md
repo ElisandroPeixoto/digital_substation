@@ -72,26 +72,32 @@ Réplica do frontal do relé (imagem de referência em `assets/relay-front-refer
 
 **Tela inicial da simulação (mesa de teste):**
 
-- **Disjuntor (campo):** estado (aberto/fechado/abrindo/fechando), contador de operações, botões **Abrir (campo)** e **Fechar
-  (campo)** (movem o disjuntor físico, qualquer que seja o modo da entrada 52A), e os **tempos de abertura e de fechamento** (ms; padrão 60 e 100).
-  Aberturas ≥ 100/120/140 ms acionam os alarmes de tempo de abertura (níveis 1–3) do ajuste v1.24.
+- **Disjuntor (campo)** (SEL-751 e SEL-311C): a chave **Simular disjuntor** (`breaker_auto`, padrão ligada) decide se há disjuntor simulado.
+  - **Ligada:** estado (aberto/fechado/abrindo/fechando), contador de operações, botões **Abrir (campo)** e **Fechar (campo)**, os
+    **tempos de abertura e de fechamento** (ms; padrão 60 e 100) e as **variáveis do disjuntor**:
+    **Variáveis de abertura** (`bk_trip`) e **Variáveis de fechamento** (`bk_close`) — bits do Relay Word separados por vírgula ou espaço
+    (ex.: `OUT101, TRIP`) — e **Estado do disjuntor (entrada)** (`bk_status`, uma `INxxx`). Campo vazio = automático: as bobinas deduzidas das
+    `OUTxxx` e a entrada da equação `52A` (mostradas no campo e na linha "Em uso"). Nome desconhecido é recusado. A entrada de estado acompanha a
+    posição (alternar a entrada move o disjuntor).
+  - **Desligada:** não há disjuntor: as saídas não movem nada e a entrada de estado fica livre em *Entradas digitais* (permite testar 52A
+    divergente). No SystemLab, a posição do disjuntor monitorado deixa de ser sincronizada com o relé.
+  Aberturas ≥ 100/120/140 ms acionam os alarmes de tempo de abertura (níveis 1–3) do ajuste v1.24. No SEL-787 (sem este cartão) a chave
+  continua em *Entradas digitais*.
 - **Medição (valores injetados):** tabela de correntes, tensões, frequência e P/Q/S/FP, em módulo/ângulo, primário e secundário. Contém:
   - a chave **Injeção analógica: LIGADA/DESLIGADA** (a simulação **inicia desligada**: o relé enxerga corrente, tensão e potência zero);
   - o botão **Abrir janela de injeção ↗**;
   - a opção **Desligar a injeção analógica quando uma saída digital atuar**, com a **seleção das saídas** (nenhuma marcada = qualquer saída).
     Se a saída que atuou é a bobina de abertura e o disjuntor ainda está fechado, o corte espera o disjuntor abrir (a corrente persiste durante o
     tempo de abertura). O usuário religa a injeção pela chave.
-- **Entradas digitais:** cada entrada é um botão que alterna o estado. A opção **Simular o estado do disjuntor automaticamente** faz a
-  entrada do 52A (normalmente `IN101`) acompanhar as bobinas (alternar a entrada move o disjuntor); desligada, a entrada é livre
-  (permite testar 52A divergente do estado físico). O estado inicial de cada entrada é deduzido de ALIAS/DP ("normal"). Entradas com
-  filtro de *debounce* (`INxxxD`) mostram "aguardando o filtro".
+- **Entradas digitais:** cada entrada é um botão que alterna o estado (a entrada de estado do disjuntor aparece com "· 52A"). O estado inicial
+  de cada entrada é deduzido de ALIAS/DP ("normal"). Entradas com filtro de *debounce* (`INxxxD`) mostram "aguardando o filtro".
 - **Saídas digitais:** ATUADA/REPOUSO de cada `OUTxxx`, indicando a função de bobina (abertura/fechamento) deduzida.
 - **Auxiliares do relé:** falha de hardware (`HALARM`), links Ethernet A/B, SNTP principal/backup e **tensão CC**.
 
 ### Variáveis internas
 
 Estado interno completo, com filtro por nome, comentário ou equação, e a opção **Só ativos (=1)**. Seções: Disparo e fechamento;
-Elementos de proteção (com pickup, múltiplo, tempo previsto e reset dos 51); Religamento automático (79); Entradas digitais; Saídas
+Elementos de proteção (com pickup, ajuste em valor primário — A × CTR, ou CTRN no neutro e o TC do enrolamento no 787; V × PTR, ou PTRS no VS; Ω × PTR/CTR — e reset dos 51); Religamento automático (79); Entradas digitais; Saídas
 digitais; Latches (LT); Variáveis SELogic temporizadas (SV); Contadores e variáveis matemáticas; Grandezas analógicas; **Relay Word** (todos os
 bits). Há um alerta quando o ajuste usa **bits que o simulador não conhece** (valem 0).
 
@@ -225,8 +231,8 @@ comando (`SV03T`) leva o 79 a `LO`.
 
 ### Disjuntor e campo
 
-As bobinas de abertura e de fechamento são **deduzidas** das expressões/comentários das saídas (`TRIP`/"ABERTURA" × `CLOSE`/"FECHAMENTO"); a posição
-alimenta a entrada do 52A (deduzida da equação `52A`). A falta (`POST/DELETE /fault`, tipos AG BG CG AB BC CA ABC, permanente ou transitória) existe na API e
+As bobinas de abertura e de fechamento são as **Variáveis de abertura/fechamento** do cartão Disjuntor (campo) ou, vazias, **deduzidas** das
+expressões/comentários das saídas (`TRIP`/"ABERTURA" × `CLOSE`/"FECHAMENTO"); a posição alimenta a entrada de estado (a escolhida ou a da equação `52A`). A falta (`POST/DELETE /fault`, tipos AG BG CG AB BC CA ABC, permanente ou transitória) existe na API e
 nos testes, mas **não tem controle na interface** (decisão de projeto).
 
 ### Medição
@@ -290,6 +296,70 @@ Suportado a partir de `RELAYTYPE=SEL-787-*` (`backend/app/engine787.py`, `protec
   elementos combinados (50P121P, 51PC12P…), 50P3xA/B/C (TCs separados); 27/59/25/32/81 vêm do motor do 751.
 - **Disparo/fechamento por enrolamento**: TRn → TRIPn e TRXFMR → TRIPXFMR (TDURD, ULTRIPn/ULTRXFMR), CLn → CLOSEn (CFDn, ULCLn) e um disjuntor simulado por
   enrolamento; as bobinas são deduzidas das saídas OUTxxx que citam TRIPn/TRIPXFMR/CLOSEn. Sem religamento (79). `52An` só segue o disjuntor se for uma entrada (INxxx).
+
+## SEL-311C (proteção de linha de transmissão)
+
+Suportado a partir de `RELAYTYPE=SEL-311C-*` (`backend/app/engine311c.py`, `protection_311c.py`, `panel311c.py`; frontal
+`frontend/src/components/Relay311CFront.tsx`; testes `test_sel311c.py`, que usam um ajuste sintético e, se existir na raiz, o
+`Padrões SEL-311C.rdb`). Referência visual do frontal: `assets/relay-front-311c-reference.webp`. Fontes: *SEL-311C-1 Instruction Manual*
+(trechos fornecidos: seção 3 – distância e sobrecorrente; seção 4 – LOP, carga e direcionais), Date Code 20261020.
+
+**Como os ajustes são lidos** (diferente do 751):
+
+- Grupos `1`–`6` têm só ajustes numéricos e enables; **toda a SELogic fica na classe de lógica do grupo** (`L1`–`L6`): `TR`, `TRCOMM`,
+  `TRSOTF`, `DTT`, `ULTR`, `52A`, `CL`, `ULCL`, `79RI`/`79RIS`/`79DTL`/`79STL`/`79BRS`/`79CLS`, torques `67xnTC`/`51xTC`, `SVn`, `SETn`/`RSTn`,
+  `LVn`, `OUTxxx`/`ALRMOUT`, `LEDn`, `DPn`, `SS1`–`SS6`, `ER`, `FAULT`, `TMBnX`. Textos do display (`DPn_1`/`DPn_0`) e dos bits locais
+  (`NLBn`/`CLBn`/`SLBn`/`PLBn`) vêm da classe `T`; textos e retenção dos LEDs de alvo (`LEDnnA`/`LEDnnL`) da `G`.
+- **Tempos em ciclos** (TDURD, CFD, 79OIn, 79RSD, 79RSLD, SVnPU/DO, ZnPD/ZnGD/ZnD, 67xnD, 3POD, SOTFD, TGR, debounce `INxxxD`), convertidos por NFREQ.
+- **SELogic clássica**: `+` (OU), `*` (E), `!` (NÃO), `/X` (borda de subida), `\X` (borda de descida) – suportada em `selogic.py`.
+- Nomes sem zeros à esquerda: `SV1`–`SV16`/`SVnT`, `LT1`–`LT16`, `LV1`–`LV32` (variáveis sem temporizador, avaliadas antes das SV),
+  `PB1`–`PB10` e `PBnPUL`, `LB1`–`LB16` (bits locais), `RB1`–`RB32`. Entradas IN101–IN106 e IN201–IN216; saídas OUT101–OUT107, OUT201–OUT212 e ALRMOUT.
+- VNOM do 311C é fase-neutro (secundário): a injeção inicial usa VNOM × PTR e 1 A sec. de carga; `info.vnom` guarda o valor fase-fase.
+- Grandezas com os nomes do 311C para o mapa DNP (`IA`, `IB`, `IC`, `IN` em A prim.; `VA`…`VCA` em kV; `MW3`, `MVAR3`, `PF3`, `MWH3O`…, `FI`, `FLOC`).
+
+**Proteção simulada** (`protection_311c.py`):
+
+- **Distância de fase** (E21P = 1–4): mho por memória de V1 em pares AB/BC/CA (MABn, MBCn, MCAn → MnP; Tabela 3.1, Figuras 3.4–3.6) com
+  |Ipp| > 50PPn, direção 32QF/F32P (Z1, Z2; Z3/Z4 por DIR3/DIR4), VPOLV, !ILOP e bloqueio por FIDS. E21P = 1C–4C: **compensador** (MPPn e MABCn,
+  Tabela 3.1; polarização do trifásico = −j·VAB − 0,25·VCmem, leitura do texto da tabela).
+- **Distância de terra**: mho (E21MG; MAGn…) e quadrilateral (E21XG; XAGn…, reatância polarizada por I2 ou IG com TANG e resistência RGn),
+  compensação k0 (k0M1/k0A1 na Z1, k0M/k0A nas demais), supervisão 50Ln/50GZn, 32GF/32GR, FSA/FSB/FSC, VPOLV, !ILOP e !3PO (Z1). ZnG = OU.
+- **Temporizadores de zona** (Figura 3.23): MnPT (ZnPD), ZnGT (ZnGD) e comum ZnT (ZnD, com suspensão de 1 ciclo). **Atraso `OFF` = saída sempre 0**
+  (p. 3.29). No padrão "Entrada de Linha 21" Z1GD = OFF, então só a Z2 (20 ciclos) dispara por distância.
+- **Sobrecorrente**: 50/67 de fase níveis 1–4 (50An/50Bn/50Cn, 50Pn, 67Pn, 67PnT) **não direcional** (p. 3.38, só torque 67PnTC); terra residual
+  (50Gn/67Gn) e seq. negativa (50Qn/67Qn) **direcionais**: níveis 1–2 à frente (32GF/32QF), 3–4 por DIR3/DIR4. 51P (máx. fase), 51G (3I0) e 51Q
+  (3I2): curvas U1–U5/C1–C5, bits 51x/51xT/51xR, torque 51xTC, reset 51xRS (Y = eletromecânico, N = 1 ciclo).
+- **Direcionais**: 32Q (Figura 4.20: z2 = Re[V2·(I2∠Z1ANG)*]/|I2|² com os limiares de Z2F/Z2R, 50QFP/50QRP, a2, k2); 32G pela ORDER (Q e V;
+  o I – canal IN polarizado por corrente – não é simulado); 32P (Figura 4.21). Com LOP e ELOP = Y, 32QF e 32GF vão a 1 (p. 4.26).
+- **Supervisões**: LOP (chave "Perda de potencial" da bancada), ILOP (ELOP = Y/Y1), 3PO (OPO = 52 ou 27, 50LP, queda 3POD), SOTFE (ESOTF),
+  load-encroachment ZLOAD/ZLIN/ZLOUT (ELOAD), FIDS (ângulo I2A × I0, p. 3.22), 27/59 (EVOLT) e 81D1–81D6 com 27B81 (E81).
+- **Disparo**: `TR + TRSOTF·SOTFE + DTT` → TRIP (mínimo TDURD; cai com ULTR ou TARGET RESET); TPA = TPB = TPC = 3PT = TRIP (tripolar).
+  `TRCOMM` é avaliada, mas sem esquema de teleproteção não dispara. Fechamento `CL` (CFD → CF), religamento 79 como no 751 com tempos em ciclos.
+- **Localizador** (EFLOC = Y): no disparo, reatância do laço de menor impedância ÷ reatância de Z1MAG∠Z1ANG × LL → `FLOC`.
+
+**Memória de tensão e falta trifásica próxima.** O material fornecido diz que o mho de fase é polarizado por V1mem (p. 3.4, Figura 3.1,
+Equação 3.1), que **VPOLV** supervisiona mho e quadrilaterais e assere quando a memória de V1 é maior que 1 V (p. 3.21) e que o direcional F32P/R32P
+exige VPOLV, !ZLOAD, !ILOP e |IAB|, |IBC|, |ICA| > 0,1·INOM (Figura 4.21, p. 4.28). **Não informa a constante de tempo da memória nem uma
+retenção da direção** depois que ela se esgota. O simulador usa um filtro de 1ª ordem que acompanha V1 com constante **adotada** de 16 ciclos
+(`MEM_TAU_CYC`): numa falta trifásica franca próxima (V = 0) a direção e os mho de fase se mantêm por ≈ 4,2 × 16 ciclos ≈ 1,1 s (até |V1mem| < 1 V);
+depois VPOLV cai e o que depende deles (ex.: `51PTC = (M1P+M2P)*!LOP`) volta ao repouso. Na prática a Z1 dispara bem antes.
+
+**Frontal** (aba Painel frontal): display 2×16, TARGET RESET/LAMP TEST (segurar acende todos os LEDs), teclas de **dupla função** (no display
+rotativo valem METER, EVENTS, STATUS, OTHER, SET, CNTRL e GROUP; dentro de um menu, CANCEL, SELECT, setas e EXIT), LEDs ENABLED, TRIP, TIME,
+COMM, SOTF, RS, LO, 51, FAULT TYPE A/B/C/G e ZONE/LEVEL 1–4, e 10 botões PB1–PB10 com LED (LED1–LED10; coluna esquerda PB1–PB5, direita
+PB6–PB10). A seção de disjuntor do lado direito (OPEN/CLOSED, TRIP/CLOSE) não foi reproduzida. Os alvos são gravados no disparo
+(`LTRIP`, `LTIME`, `LCOMM`, `LSOTF`, `L51`, `LZONE1`–`LZONE4`, citados por `LED12`–`LED26`) e apagam com TARGET RESET, `RSTTRGT` ou, com
+RSTLED = Y/Y1, ao fechar o disjuntor. FAULT TYPE: fases com corrente ≥ 60 % da maior e G com 3I0 ≥ 10 % (simplificação). O menu **CNTRL**
+opera os bits locais (também na bancada, cartão "Bits locais"). O display rotativo mostra IA/IB/IC/IN e os pontos DP com texto. Os textos dos
+botões ficam no navegador (`sel751.pbtitles.<relay_id>`, 10 posições; "/" quebra a linha). Na aba Variáveis internas, a seção
+"Direcionais e supervisões da linha" mostra VPOLV, |V1mem|, FIDS, 32Q/32G/32P, z2/z0 e o elemento de terra em uso.
+
+**Demais módulos**: SystemLab (modelo SEL-311C no IED, com TC/TP/disjuntor como o 751), SCADA (mapa DNP do ajuste), IEC61850 (GOOSE por VBnnn;
+E61850/EGSE lidos da porta 5, classe `P5`) e MBitConfig (portas 2 e 3, `PROTO` em `P2`/`P3`; TMBnX avaliados na lógica `Ln`).
+
+**Fora do escopo** (lido e ignorado): teleproteção (ECOMM: POTT/DCB/DCUB; TRCOMM não dispara), extensão de zona 1, CCVT (CVTBL = 0),
+out-of-step (OSBn = 0), sequenciais Z2SEQT/M2PSEQT/Z2GSEQT, 50BF, 25, 79SKP/79SEQ/79DLS/79CLSD, TULO/TOPD, demanda, monitor de disjuntor, PMU,
+direcional 32I (canal IN), Modbus e portas.
 
 ## Exportar o IED em JSON
 

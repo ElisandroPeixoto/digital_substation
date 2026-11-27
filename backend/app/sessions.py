@@ -52,6 +52,10 @@ class Session:
 
 def create_engine(relay: RdbRelay) -> RelayEngine:
     settings = RelaySettings.from_files(relay.files)
+    if "311C" in settings.header.get("RELAYTYPE", "").upper():
+        from .engine311c import Relay311CEngine
+
+        return Relay311CEngine(settings, device_name=relay.name)
     if "787" in settings.header.get("RELAYTYPE", "").upper():
         from .engine787 import Relay787Engine
 

@@ -31,11 +31,11 @@ Base: `/api` (API do aplicativo **DigitalRelay** do Eclipse; o frontend do Eclip
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/sessions/{sid}/panel` | `model` (`751`/`2440`) `bits` (VB/CB/RB usados e observados) e, no SEL-2440, `io` (cartões 100/200/300 de 16 pontos, bits VB/CB/RB usados e LEDs de estado). LEDs, display, estado do disjuntor, entradas, **saídas digitais**, medição (módulo/ângulo, P/Q/S) e configuração da simulação. |
-| POST | `/sessions/{sid}/button` | `{button: "PB1".."PB8" \| "TARGET_RESET", pressed}`. Pressionar e soltar são eventos separados. |
-| POST | `/sessions/{sid}/bits` | `{name: VB###\|CB###\|RB##, mode: set\|clear\|toggle\|pulse\|watch}` – aciona bits virtuais, de controle e remotos (SEL-751 e SEL-2440); `watch` só passa a exibir o bit. |
+| GET | `/sessions/{sid}/panel` | `model` (`751`/`787`/`2440`/`311C`; no 311C `panel` traz também `fault_type` e `local_bits`) `bits` (VB/CB/RB usados e observados) e, no SEL-2440, `io` (cartões 100/200/300 de 16 pontos, bits VB/CB/RB usados e LEDs de estado). LEDs, display, estado do disjuntor, entradas, **saídas digitais**, medição (módulo/ângulo, P/Q/S) e configuração da simulação. |
+| POST | `/sessions/{sid}/button` | `{button: "PB1".."PB8" (SEL-311C: até "PB10") \| "TARGET_RESET", pressed}`. Pressionar e soltar são eventos separados. |
+| POST | `/sessions/{sid}/bits` | `{name: VB###\|CB###\|RB##\|LBn, mode: set\|clear\|toggle\|pulse\|watch}` – aciona bits virtuais, de controle e remotos (SEL-751, SEL-2440 e SEL-311C, que usa `RBn`/`LBn` sem zero à esquerda; `LBn` = bits locais do menu CNTRL); `watch` só passa a exibir o bit. |
 | POST | `/sessions/{sid}/inputs` | `{name, value}` – entrada digital. Com `breaker_auto` ligado, a entrada do 52A (`IN101`) move o disjuntor; desligado, só muda o estado da entrada. |
-| POST | `/sessions/{sid}/sim` | `{patch: {...}}` – fasores injetados **em valores primários** (`ia_mag`, `ia_ang`, `ib_*`, `ic_*`, `va_*`, `vb_*`, `vc_*`: módulo em A / V fase-neutro, ângulo em graus), `freq`, `vdc`, `open_ms`, `close_ms`, `breaker_auto`, `analog_on` (liga/desliga a injeção analógica), `lop` (perda de potencial simulada), `halarm`, links… |
+| POST | `/sessions/{sid}/sim` | `{patch: {...}}` – fasores injetados **em valores primários** (`ia_mag`, `ia_ang`, `ib_*`, `ic_*`, `va_*`, `vb_*`, `vc_*`: módulo em A / V fase-neutro, ângulo em graus), `freq`, `vdc`, `open_ms`, `close_ms`, `breaker_auto` (simular disjuntor), `bk_trip`/`bk_close` (bits do Relay Word que abrem/fecham o disjuntor, separados por vírgula; vazio = deduzidos; nome desconhecido → 400), `bk_status` (entrada `INxxx` do estado; vazio = a da equação 52A), `analog_on` (liga/desliga a injeção analógica), `lop` (perda de potencial simulada), `halarm`, links… |
 | POST | `/sessions/{sid}/force` | `{name, value}` – força uma variável lógica (SV, SVT, LT, SCnn/SCnnQ, MV, OUT…) em 0/1 (ou número em SC/MV); `value: null` libera. |
 | DELETE | `/sessions/{sid}/force` | Libera todas as variáveis forçadas. |
 | POST | `/sessions/{sid}/breaker` | `{closed}` – move o disjuntor no campo (posição física), qualquer que seja o modo da entrada 52A. |

@@ -32,7 +32,7 @@ extrai os arquivos de texto de cada ajuste e **simula o relé** com o ajuste esc
 3. **Mapa DNP3** (BO/BI/AI/eventos) com **envio de comandos** (Select/Operate/Direct).
 
 É um **MVP**: simula o comportamento funcional descrito pelos ajustes, **não** executa o firmware.
-Suporta o **SEL-751**, o **SEL-787** (`engine787.py` + `protection_787.py`: 87, REF1, 50/51 por enrolamento, até 4 enrolamentos; testes `test_sel787.py`; detalhes em `docs/digitalrelay.md`) e o **SEL-2440** (DPAC, só lógica e E/S: `engine.model == "2440"`, passo `_step_2440`, classe de lógica `L`, 48 entradas/saídas em 3 cartões, bits `VB`/`CB`/`RB`; frontend `Relay2440Front` + `Panel2440`; testes `test_sel2440.py`; detalhes em `docs/digitalrelay.md`). VB/RB/CB: `engine.set_bit` (`set|clear|toggle|pulse|watch`), valem para os dois modelos; textos personalizados só no frontend (`customTexts.ts`, aba `TextsView`, chave `sel751.texts.<relay_id>`).
+Suporta o **SEL-751**, o **SEL-787** (`engine787.py` + `protection_787.py`: 87, REF1, 50/51 por enrolamento, até 4 enrolamentos; testes `test_sel787.py`; detalhes em `docs/digitalrelay.md`), o **SEL-311C** (linha de transmissão: `engine311c.py` + `protection_311c.py` + `panel311c.py`, `engine.model == "311C"`; SELogic na classe `Ln` do grupo, tempos em ciclos, SELogic clássica `+ * ! / \`; distância mho/quad + compensador, 50/67/51, 32Q/32G/32P, FIDS, LOP, 3PO, SOTF, carga, 79; memória de V1 com constante ADOTADA de 16 ciclos (`MEM_TAU_CYC`, não consta no manual; VPOLV > 1 V, p. 3.21); frontal `Relay311CFront` em SVG com teclas de dupla função e menu CNTRL dos bits locais `LBn`; testes `test_sel311c.py`, que usam o `Padrões SEL-311C.rdb` da raiz se existir) e o **SEL-2440** (DPAC, só lógica e E/S: `engine.model == "2440"`, passo `_step_2440`, classe de lógica `L`, 48 entradas/saídas em 3 cartões, bits `VB`/`CB`/`RB`; frontend `Relay2440Front` + `Panel2440`; testes `test_sel2440.py`; detalhes em `docs/digitalrelay.md`). VB/RB/CB: `engine.set_bit` (`set|clear|toggle|pulse|watch`), valem para todos os modelos (no 311C também `LBn` e `RBn` sem zero à esquerda); textos personalizados só no frontend (`customTexts.ts`, aba `TextsView`, chave `sel751.texts.<relay_id>`).
 Escopo excluído (lido, mas ignorado): Modbus (`M`), EtherNet/IP (`E1–E3`), IEC 103 (`I`),
 portas (`P1–P4`, `PF`), touchscreen (`SET_HMI.TXT`).
 
@@ -41,7 +41,7 @@ portas (`P1–P4`, `PF`), touchscreen (`SET_HMI.TXT`).
 ```
 backend/    Python 3.12 + FastAPI (+ olefile, pytest, httpx)
 frontend/   React 18 + TypeScript + Vite (sem biblioteca de UI; CSS puro em src/styles.css)
-assets/     identidade visual do Eclipse (eclipse-logo/icon/…) e relay-front-reference.png (referência do frontal)
+assets/     identidade visual do Eclipse (eclipse-logo/icon/…) e relay-front-reference.png (referência do frontal do 751; a do 311C é relay-front-311c-reference.webp)
 docs/       um .md por app (digitalrelay.md, phaseengine.md, systemlab.md, overcurrent.md), guias didáticos (funcoes-50-51.md, funcao-direcional-67.md) + historico-versoes.md, arquitetura.md, logica-simulada.md, api.md, roadmap-sel751-alimentador-v1.24.md
 Padrões SEL-751.rdb                 arquivo de exemplo (20 ajustes) – usado pelos testes (arquivos *.rdb são ignorados pelo git)
 Padrões SEL-751 (extraído)/         extração manual feita no início (dado de referência, não é usada pelo código)
@@ -66,12 +66,13 @@ run.ps1                             instala, compila o frontend e sobe em http:/
 | `describe.py` | Rótulos (comentários `#`, ALIAS do SER, textos do display), `normal_state`, `standard_label`. |
 | `sessions.py` | `SessionManager` + laço de tempo real (varredura a cada 4 ms (`BASE_DT`); `dt = 0,004 × velocidade`). |
 | `main.py` | Rotas REST e entrega de `frontend/dist`. |
+| `engine311c.py` / `protection_311c.py` / `panel311c.py` | SEL-311C: motor (lógica em `Ln`, tempos em ciclos), elementos de linha e painel (alvos `LTRIP`/`LZONEn`…, LED1–LED26, DPs da classe `T`, bits locais). |
 
 ### Frontend (`frontend/src`)
 
 `eclipse/` (shell, Home, About, registro de apps), `prefs.tsx` (preferências de exibição: base das estampas sim/real e formato `segundos` ou `hh:mm:ss:mmm`; tela `ConfigView`, ícone ⚙ na `TopBar`), `App.tsx` (roteador do Eclipse e `DigitalRelayApp`: fluxo upload → seleção → simulador; sessão restaurada via `localStorage` chave `sel751.sim`),
-`api.ts` (cliente; **eventos de botão em fila ordenada**), `hooks.ts` (`usePoll`), `types.ts`,
-`components/`: `RelayFront`, `Lcd` (display + menu), `TestBench`, `MeasurementCard`, `InjectionWindow` (+ `PhasorDiagram`, `phasor.ts`), `VariablesView`, `DnpView`, `SettingsView`,
+`api.ts` (cliente; **eventos de botão em fila ordenada**), `hooks.ts` (`usePoll`, `fmt`, `modelLabel`), `types.ts`,
+`components/`: `RelayFront`, `Relay311CFront` (frontal SVG do SEL-311C), `Lcd` (display + menu), `TestBench`, `MeasurementCard`, `InjectionWindow` (+ `PhasorDiagram`, `phasor.ts`), `VariablesView`, `DnpView`, `SettingsView`,
 `EventsView`, `UploadScreen`, `TopBar`, `ui.tsx`.
 Estado por **polling**: `/panel` a 10 Hz, `/state` `/dnp` `/ser` a 2–2,5 Hz só com a aba aberta.
 
@@ -106,8 +107,9 @@ Decisões que afetam o comportamento (verificar contra relé real se possível):
 - `TRIP` mantém `TDURD` e só cai com `ULTRIP` e `TR` falso. `CLOSE` cai ao fechar (`52A`), por `ULCL` ou após `CFD` (gera `CF`).
 - **79**: `RS`→`CY`→`LO`; tempo morto `79OIn` conta com disjuntor aberto e sem `79STL`; reset `79RSD` com disjuntor fechado e sem
   `79BRS`; `79DTL` leva a bloqueio; `SH0..SH4` = nº de religamentos. Abertura por comando (`SV03T`) leva o 79 a `LO`.
-- Bobinas de abertura/fechamento do disjuntor são **deduzidas** das expressões/comentários das `OUTxxx`
-  (`TRIP`/"ABERTURA" × `CLOSE`/"FECHAMENTO"); a entrada do 52A é deduzida da equação `52A` (normalmente `IN101`).
+- Bobinas de abertura/fechamento do disjuntor: as **variáveis escolhidas** no cartão *Disjuntor (campo)* (`SimConfig.bk_trip`/`bk_close`,
+  bits do Relay Word; 751 e 311C) ou, vazias, **deduzidas** das expressões/comentários das `OUTxxx` (`TRIP`/"ABERTURA" × `CLOSE`/"FECHAMENTO",
+  `_auto_coils`); a entrada de estado é `bk_status` ou a da equação `52A` (normalmente `IN101`, `_apply_bk_status`).
 - Entradas: estado inicial deduzido de ALIAS/DP ("normal"); `IN101` é movida pelo modelo do disjuntor.
 - Injeção: fasores por fase em `SimConfig` (`ia_mag`/`ia_ang`… `vc_*`, **sempre primários**); a UI converte com CTR/PTR no
   modo secundário. Falta ativa sobrepõe as correntes; disjuntor aberto = corrente zero. A janela de injeção é um pop-up da própria
@@ -116,8 +118,9 @@ Decisões que afetam o comportamento (verificar contra relé real se possível):
 - `SimConfig.analog_on` (padrão DESLIGADO: a simulação inicia sem corrente nem tensão): chave "Injeção analógica" no cartão Medição da tela inicial; desligada = correntes e tensões
   zero no relé (`fieldsim.phasors`). A **janela de injeção só edita valores**: a falta (`POST/DELETE /fault`, presets) segue na API e nos
   testes, mas **não tem controle na UI** (decisão do usuário).
-- `SimConfig.breaker_auto` (padrão ligado): a entrada do 52A segue o disjuntor; desligado, é livre (`engine.input_raw`).
-  `POST /breaker` move o disjuntor físico em qualquer modo.
+- `SimConfig.breaker_auto` = **Simular disjuntor** (padrão ligado; chave no cartão Disjuntor (campo), no 787 em Entradas digitais): a entrada de
+  estado segue o disjuntor; desligado, não há disjuntor (bobinas não movem nada, entrada livre, `breaker_closed = null` para o SystemLab).
+  `POST /breaker` move o disjuntor físico.
 - Textos centrais dos botões PB1–PB8 são só de UI (`localStorage`, chave `sel751.pbtitles.<relay_id>`); coluna esquerda = PB5–PB8,
   direita = PB1–PB4.
 - Medidas: `IN` = soma fasorial ÷ `CTRN`, `IG` = soma fasorial ÷ `CTR`; pickups em A **secundários** (primário ÷ CTR); `VNOM`×`PTR` = tensão L-L primária.
@@ -130,7 +133,7 @@ demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em red
 
 ## Convenções e cuidados
 
-- **Versão** (semântica, atual 1.0.0): `frontend/package.json` (injetada pelo Vite em `eclipse/version.ts`, mostrada no Sobre com
+- **Versão** (semântica, atual 1.1.0): `frontend/package.json` (injetada pelo Vite em `eclipse/version.ts`, mostrada no Sobre com
   data/commit da compilação; o histórico fica numa página separada, `#/about/versoes`), `backend/app/version.py`, `CHANGELOG.md` e
   `docs/historico-versoes.md`; ao lançar versão, atualize os quatro e `VERSION_HISTORY` (`test_version.py` confere).
 
@@ -150,7 +153,7 @@ demanda, `79SKP/79SEQ/79DLS/79CLSD`, menu completo do display, pilha DNP3 em red
 
 `conftest.py` (fixtures `archive`, `feeder`; helpers `run`, `tap`), `test_selogic.py`, `test_rdb_settings.py`,
 `test_engine_feeder.py` (cenários do padrão Alimentador v1.24: falta/religamento/bloqueio, dois toques, local/remoto, DNP,
-grupos, alarmes de abertura, debounce, LEDs), `test_api.py` (TestClient com upload real), `test_overcurrent.py` (50/51 com ajuste sintético, não depende do .rdb), `test_directional.py` (controle direcional com sinais montados por componentes simétricas), `test_sel2440.py` (SEL-2440 com ajuste sintético).
+grupos, alarmes de abertura, debounce, LEDs), `test_api.py` (TestClient com upload real), `test_overcurrent.py` (50/51 com ajuste sintético, não depende do .rdb), `test_directional.py` (controle direcional com sinais montados por componentes simétricas), `test_sel2440.py` (SEL-2440 com ajuste sintético), `test_sel311c.py` (SEL-311C: SELogic clássica, distância, memória/VPOLV, 50/67/51, LOP, 79, bits locais, DNP; sintético + `.rdb` de referência), `test_breaker_map.py` (variáveis de abertura/fechamento/estado e Simular disjuntor), `test_primary_setting.py` (coluna "Ajuste (primário)" das Variáveis internas, `engine.primary_setting`).
 Testes que dependem do `.rdb` são ignorados se o arquivo da raiz não existir. Ao mudar o motor, rode a suíte inteira.
 
 ## Verificação manual rápida

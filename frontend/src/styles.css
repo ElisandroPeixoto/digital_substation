@@ -143,6 +143,8 @@ td.files { background: var(--soft); }
 .numfield-box { display: flex; align-items: center; gap: 4px; }
 .numfield-box input { width: 100%; min-width: 0; color: var(--ink); }
 .numfield-box em { font-style: normal; font-size: 11px; white-space: nowrap; }
+.numfield .bk-var { width: 100%; min-width: 0; color: var(--ink); text-transform: uppercase; }
+.numfield .bk-var::placeholder { text-transform: none; }
 .presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .chip-btn { border-radius: 14px; font-size: 12px; padding: 3px 10px; }
 .bk { font-weight: 800; border-radius: 6px; padding: 3px 12px; letter-spacing: .04em; }
@@ -747,3 +749,11 @@ th.sortable:hover { color: var(--accent); }
 
 /* Cabeçalho dos apps: ícone do app (o mesmo da Home) */
 .brand-icon { width: 36px; height: 36px; display: block; flex: none; }
+
+/* SEL-311C: frontal largo (SVG) acima da bancada de teste */
+.panel-tab.panel-311 { grid-template-columns: 1fr; }
+.r311-wrap { width: 100%; max-width: 1240px; }
+.r311 { width: 100%; height: auto; display: block; user-select: none; touch-action: none; }
+.r311-key:active rect { transform: translateY(1px); }
+.r311-titles { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; }
+.r311-titles input { width: 150px; margin-left: 6px; }

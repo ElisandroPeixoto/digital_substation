@@ -85,7 +85,7 @@ class SessionCreate(BaseModel):
 
 
 class ButtonBody(BaseModel):
-    button: str               # "PB1".."PB8" | "TARGET_RESET"
+    button: str               # "PB1".."PB8" (SEL-311C: até PB10) | "TARGET_RESET"
     pressed: bool = True
 
 
@@ -230,7 +230,9 @@ async def list_sessions() -> list:
     """Sessões ativas (relés instanciados) e o IED do módulo IEC61850 associado a cada uma."""
     return [{"id": s.id, "model": s.engine.model, "relay_id": s.relay.id, "device": s.engine.device_name, "filename": s.filename,
              "running": s.running, "ied": manager.net.bindings.get(s.id),
-             "breaker_closed": None if s.engine.model == "2440" else bool(s.engine.field.breaker.closed)} for s in manager.sessions.values()]
+             # sem disjuntor simulado (2440, ou "Simular disjuntor" desligado) o SystemLab não sincroniza a posição
+             "breaker_closed": None if s.engine.model == "2440" or not s.engine.field.cfg.breaker_auto else bool(s.engine.field.breaker.closed)}
+            for s in manager.sessions.values()]
 
 
 @app.get("/api/sessions/{sid}")
@@ -446,7 +448,10 @@ async def get_panel(sid: str) -> dict:
         "bits": eng.snapshot_bits(),
         "time": round(eng.t, 3), "running": s.running, "speed": s.speed,
         "panel": eng.panel.snapshot(),
-        "breaker": {"state": bk.state(), "closed": bk.closed, "operations": bk.open_count},
+        "breaker": {"state": bk.state(), "closed": bk.closed, "operations": bk.open_count,
+                    # variáveis em uso e as deduzidas dos ajustes (mostradas como padrão no cartão Disjuntor (campo))
+                    "trip_vars": eng.trip_outs, "close_vars": eng.close_outs, "status_var": eng.bk_input,
+                    "auto_trip": eng.auto_trip_outs, "auto_close": eng.auto_close_outs, "auto_status": eng.auto_bk_input},
         "status": {
             "group": eng.group, "trip": eng.b("TRIP"), "close": eng.b("CLOSE"), "cf": eng.b("CF"),
             "recloser": eng.rc.state if eng.vals.get("79RS", 0) + eng.vals.get("79CY", 0) + eng.vals.get("79LO", 0) else "-",
@@ -467,7 +472,7 @@ async def press_button(sid: str, body: ButtonBody) -> dict:
     name = body.button.upper()
     if name == "TARGET_RESET":
         eng.target_reset()
-    elif name.startswith("PB") and name[2:].isdigit() and 1 <= int(name[2:]) <= 8:
+    elif name.startswith("PB") and name[2:].isdigit() and 1 <= int(name[2:]) <= getattr(eng, "PB_COUNT", 8):   # SEL-311C: PB1–PB10
         eng.press(int(name[2:]), body.pressed)
     else:
         raise HTTPException(400, "Botão inválido.")
@@ -490,7 +495,7 @@ def _check_vb_free(sid: str, name: str) -> None:
 
 @app.post("/api/sessions/{sid}/bits")
 async def set_bit(sid: str, body: BitBody) -> dict:
-    """SEL-2440: aciona bits virtuais (VB), de controle (CB) ou remotos (RB): set, clear, toggle ou pulse."""
+    """Aciona bits virtuais (VB), de controle (CB, SEL-2440), remotos (RB) ou locais (LB, SEL-311C): set, clear, toggle ou pulse."""
     _check_vb_free(sid, body.name)
     try:
         _session(sid).engine.set_bit(body.name, body.mode)

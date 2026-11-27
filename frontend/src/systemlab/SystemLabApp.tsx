@@ -1428,6 +1428,7 @@ export function SystemLabApp() {
                   <select className="numinput" value={iedModel(selEl)} onChange={(e) => pickModel(selEl.id, e.target.value)}>
                     <option value="751">SEL-751</option>
                     <option value="787">SEL-787</option>
+                    <option value="311C">SEL-311C</option>
                     <option value="2440">SEL-2440</option>
                   </select>
                 </label>
@@ -1464,6 +1465,9 @@ export function SystemLabApp() {
                         </select>
                       </label>
                     ))}
+                    {selEl.links?.breaker != null && selEl.sid && sessions.find((x) => x.id === selEl.sid)?.breaker_closed == null && (
+                      <p className="hint warn">⚠ O disjuntor não é simulado neste relé (DigitalRelay → Disjuntor (campo) → "Simular disjuntor" desligado): a posição do disjuntor monitorado não é sincronizada.</p>
+                    )}
                   </>
                 )}
                 <IedMeasurements el={selEl} model={iedModel(selEl)} patch={iedAnalog(selEl, iedModel(selEl), elById, sol)} onChange={(f) => updateEl(selEl.id, f)} />

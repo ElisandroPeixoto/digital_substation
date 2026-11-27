@@ -33,6 +33,11 @@ export function usePoll<T>(fn: () => Promise<T>, ms: number, enabled = true, key
   return { data, error }
 }
 
+/** Nome comercial do modelo do relé ('751', '787', '2440', '311C'). */
+export function modelLabel(model?: string | null): string {
+  return `SEL-${model || '751'}`
+}
+
 export function fmt(n: number | null | undefined, digits = 2): string {
   if (n === null || n === undefined || Number.isNaN(n)) return '–'
   return n.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits })
