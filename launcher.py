@@ -4,7 +4,8 @@ Sobe o servidor (API + interface) em 127.0.0.1, abre o navegador e mostra uma pe
 É o ponto de entrada do executável (PyInstaller, ``--noconsole``), mas também roda direto: ``python launcher.py``.
 
 - A porta preferida é a 8000 (o navegador guarda diagramas e configurações por origem, então manter a porta evita "perder" os dados);
-  se estiver ocupada por outro programa, usa a próxima livre até 8010. Se já houver um Eclipse rodando, só abre o navegador nele.
+  se estiver ocupada por outro programa, usa a próxima livre até 8010. Se já houver um Eclipse rodando, abre o navegador nele e avisa
+  que a janela de encerrar é a dessa instância (ou, se for o servidor do run.ps1, que ele deve ser fechado).
 - Sem console não existe stdout/stderr: o registro vai para ``%LOCALAPPDATA%\\Eclipse\\eclipse.log``.
 """
 from __future__ import annotations
@@ -121,8 +122,11 @@ def main() -> int:
 
     port = None
     for p in PORTS:
-        if _is_eclipse(p):                                  # já está rodando: só abre o navegador
+        if _is_eclipse(p):                                  # já está rodando: abre o navegador e avisa (a janela é da outra instância)
             webbrowser.open(f"http://{HOST}:{p}")
+            _message("Eclipse", f"O Eclipse já está em execução em http://{HOST}:{p} (outra janela do Eclipse ou um servidor "
+                     "iniciado pelo run.ps1/uvicorn). O navegador foi aberto nele.\n\nPara encerrar, use a janela \"Eclipse em execução\" "
+                     "dessa instância ou feche o servidor que está usando a porta.")
             return 0
         if _port_free(p):
             port = p
